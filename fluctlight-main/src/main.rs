@@ -1,10 +1,10 @@
-use std::{convert::Infallible, net::SocketAddr, sync::Arc};
+use std::{convert::Infallible, net::SocketAddr, path::Path, sync::Arc};
 
 use hyper::{
     service::{make_service_fn, service_fn},
     Body, Request, Response, Server,
 };
-use smallvec::SmallVec;
+use tokio_inotify::{AsyncINotify, IN_CREATE};
 
 use crate::error::Result;
 use crate::libloader::MainModule;
@@ -22,9 +22,12 @@ fn main() -> Result<()> {
     eprintln!("Creating server...");
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
 
+    let main_module = Arc::new(MainModule::new().unwrap());
+
+    tokio_runtime.spawn(watch_module(main_module.clone()));
+
     let make_server = async {
         eprintln!("Loading module...");
-        let main_module = Arc::new(MainModule::new().unwrap());
 
         let make_service = make_service_fn(move |_conn| {
             let main_module = main_module.clone();
@@ -36,30 +39,70 @@ fn main() -> Result<()> {
             }
         });
 
-        std::result::Result::<_, hyper::Error>::Ok(Server::try_bind(&addr)?.serve(make_service))
+        std::result::Result::<_, hyper::Error>::Ok(
+            Server::try_bind(&addr)?
+                .serve(make_service)
+                .with_graceful_shutdown(shutdown_signal()),
+        )
     };
 
     let server = tokio_runtime.block_on(make_server)?;
 
-    eprintln!("Blocking...");
+    eprintln!("Server is ready.");
     tokio_runtime.block_on(server)?;
 
+    eprintln!("Shutdown complete.");
+
     Ok(())
+}
+
+async fn watch_module(main_module: Arc<MainModule>) {
+    let inotify = AsyncINotify::init().expect("Failed to install inotify watcher");
+
+    let module_path = Path::new("target/debug");
+    let module_name = "libfluctlight_router.so";
+    inotify
+        .add_watch(module_path, IN_CREATE)
+        .expect("Failed to watch module path with inotify");
+
+    use futures_util::compat::Stream01CompatExt;
+    use futures_util::StreamExt;
+    let mut inotify_stream = inotify.compat();
+
+    while let Some(event) = inotify_stream.next().await {
+        let event = event.expect("Failed to get inotify event");
+
+        if event.is_create() && event.name.ends_with(module_name) {
+            eprintln!("Received inotify event...");
+            if let Err(err) = main_module.restart().await {
+                eprintln!("Could not restart module on inotify event: {}", err);
+            }
+        }
+    }
+}
+
+async fn shutdown_signal() {
+    tokio::signal::ctrl_c()
+        .await
+        .expect("Failed to install interrupt signal handler");
+
+    eprintln!("\nInterrupt signal received, shutting down...")
 }
 
 async fn hello_world(
     main_module: Arc<MainModule>,
     req: Request<Body>,
 ) -> std::result::Result<Response<Body>, Infallible> {
-    let (status, body) = main_module.process_request(req.uri().path()).await;
-
-    let mut uri_segments: SmallVec<[&str; 8]> = req.uri().path().split('/').collect();
-    uri_segments[0] = req.method().as_str();
-
-    // match uri_segments.as_slice() {
-    //     ["GET", "_matrix", "federation", "v1", "version"] => Ok(Response::new("Version!".into())),
-    //     _ => Ok(Response::new("Hello, World".into())),
-    // };
+    let (status, body) = match main_module
+        .process_request(req.uri().path(), req.method().as_str())
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            eprintln!("Fatal error: {}", err);
+            (500, "Internal server error\n".into())
+        }
+    };
 
     Ok(Response::builder()
         .status(status)

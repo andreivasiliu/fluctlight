@@ -8,7 +8,9 @@ edition = "2021"
 [dependencies]
 fluctlight-mod-interface = { path = "../fluctlight-mod-interface" }
 hyper = { version = "0.14", features = ["server", "tcp", "http1"] }
-tokio = { version = "1", features = ["net", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["net", "rt-multi-thread", "sync", "signal"] }
 url = "2.2"
-smallvec = "1.8"
 libloading = "0.7"
+tokio-inotify = "0.4"
+futures-util = { version = "0.3.21", default-features = false, features = ["compat"] }
+
