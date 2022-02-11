@@ -1,0 +1,15 @@
+[package]
+name = "fluctlight-router"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+fluctlight-mod-interface = { path = "../fluctlight-mod-interface" }
+ruma-federation-api = "0.3.1"
+url = "2.2"
+smallvec = "1.8"

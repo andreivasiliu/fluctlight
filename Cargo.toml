@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "fluctlight-main",
+    "fluctlight-router",
+    "fluctlight-mod-interface",
+]
