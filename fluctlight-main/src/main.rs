@@ -100,7 +100,7 @@ async fn hello_world(
         Ok(response) => response,
         Err(err) => {
             eprintln!("Fatal error: {}", err);
-            (500, "Internal server error\n".into())
+            (500, "Internal server error\n".as_bytes().into())
         }
     };
 

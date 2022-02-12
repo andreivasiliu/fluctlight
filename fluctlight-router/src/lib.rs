@@ -1,22 +1,55 @@
-use fluctlight_mod_interface::{Request, Response, ResponseResult};
-use smallvec::SmallVec;
+use std::panic::catch_unwind;
+
+use fluctlight_mod_interface::{ModuleState, OpaqueModuleState, Request, ResponseResult};
+
+mod router;
+mod routes_federation;
 
 #[no_mangle]
 pub extern "C" fn process_request<'a>(request: Request<'a>) -> ResponseResult {
     eprintln!("Hello: {}", request.uri());
 
-    try_process_request(request).into()
+    let response = catch_unwind(|| {
+        let state_box = &request.module_state().state;
+        let state = state_box
+            .downcast_ref::<State>()
+            .expect("Unexpected kind of module state.");
+
+        router::try_process_request(state, request)
+    });
+
+    response
+        .map_err(|_err| "Handler panicked".to_string())
+        .and_then(|response| response)
+        .into()
 }
 
-fn try_process_request<'a>(request: Request<'a>) -> Result<Response, String> {
-    let mut uri_segments: SmallVec<[&str; 8]> = request.uri().split('/').collect();
-    uri_segments[0] = request.method();
+#[no_mangle]
+pub extern "C" fn create_state() -> OpaqueModuleState {
+    let state = Box::new(State);
 
-    let (status, body) = match uri_segments.as_slice() {
-        ["GET", "_matrix", "federation", "v1", "version"] => (200, "Version!\n"),
-        ["GET", "hello"] => (200, "Hello world\n"),
-        _ => (404, "Not found\n"),
-    };
+    let module_state = ModuleState { state };
 
-    Ok(Response::new(status, body.into()))
+    module_state.into_opaque()
 }
+
+// TODO: improper_ctypes_definitions complains about the () from RBox<()>, which
+// is FFI-safe. This needs an issue on abi_stable's crate.
+#[no_mangle]
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn destroy_state(module_state: OpaqueModuleState) -> bool {
+    let result = catch_unwind(|| {
+        let state = ModuleState::from_opaque(module_state);
+        drop(state.state);
+    });
+
+    match result {
+        Ok(()) => true,
+        Err(_err) => {
+            eprintln!("Failed to destroy module state");
+            false
+        }
+    }
+}
+
+pub(crate) struct State;

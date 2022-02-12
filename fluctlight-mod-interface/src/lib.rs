@@ -1,8 +1,9 @@
-use std::borrow::Cow;
+use std::{any::Any, borrow::Cow};
 
 use abi_stable::{
-    std_types::{RCow, RStr, RString},
-    StableAbi,
+    erased_types::TypeInfo,
+    std_types::{RBox, RCow, RStr, RString},
+    DynTrait, ImplType, StableAbi,
 };
 
 pub use abi_stable::std_types::RResult;
@@ -10,6 +11,7 @@ pub use abi_stable::std_types::RResult;
 #[derive(StableAbi)]
 #[repr(C)]
 pub struct Request<'a> {
+    module_state: &'a OpaqueModuleState,
     uri: RStr<'a>,
     method: RStr<'a>,
 }
@@ -24,17 +26,69 @@ pub struct ResponseResult {
 #[repr(C)]
 pub struct Response {
     status: u16,
-    body: RCow<'static, str>,
+    body: RCow<'static, [u8]>,
 }
 
+pub struct ModuleState {
+    pub state: Box<dyn Any + Send + Sync>,
+}
+
+#[derive(StableAbi)]
+#[repr(C)]
+pub struct OpaqueModuleState {
+    opaque_state: DynTrait<'static, RBox<()>, ModuleStateInterface>,
+}
+
+impl ModuleState {
+    pub fn into_opaque(self) -> OpaqueModuleState {
+        OpaqueModuleState {
+            opaque_state: DynTrait::from_value(self),
+        }
+    }
+
+    pub fn from_opaque(opaque: OpaqueModuleState) -> Self {
+        RBox::into_inner(
+            opaque
+                .opaque_state
+                .downcast_into()
+                .expect("Could not downcast module state"),
+        )
+    }
+
+    pub fn as_inner(opaque: &OpaqueModuleState) -> &Self {
+        opaque
+            .opaque_state
+            .downcast_as()
+            .expect("Could not downcast module state")
+    }
+}
+
+impl ImplType for ModuleState {
+    type Interface = ModuleStateInterface;
+
+    const INFO: &'static TypeInfo = abi_stable::impl_get_type_info!(ModuleState);
+}
+
+#[repr(C)]
+#[derive(StableAbi)]
+#[sabi(impl_InterfaceType(Send, Sync))]
+pub struct ModuleStateInterface;
+
 pub type ProcessRequestFunc<'a> = unsafe extern "C" fn(Request<'a>) -> ResponseResult;
+pub type CreateStateFunc<'a> = unsafe extern "C" fn() -> OpaqueModuleState;
+pub type DestroyStateFunc<'a> = unsafe extern "C" fn(OpaqueModuleState) -> bool;
 
 impl<'a> Request<'a> {
-    pub fn new(uri: &'a str, method: &'a str) -> Self {
+    pub fn new(module_state: &'a OpaqueModuleState, uri: &'a str, method: &'a str) -> Self {
         Request {
+            module_state,
             uri: uri.into(),
             method: method.into(),
         }
+    }
+
+    pub fn module_state(&self) -> &'a ModuleState {
+        ModuleState::as_inner(self.module_state)
     }
 
     pub fn uri(&self) -> &'a str {
@@ -46,8 +100,8 @@ impl<'a> Request<'a> {
     }
 }
 
-impl From<(u16, Cow<'static, str>)> for Response {
-    fn from((status, body): (u16, Cow<'static, str>)) -> Self {
+impl From<(u16, Cow<'static, [u8]>)> for Response {
+    fn from((status, body): (u16, Cow<'static, [u8]>)) -> Self {
         Response {
             status,
             body: body.into(),
@@ -55,7 +109,7 @@ impl From<(u16, Cow<'static, str>)> for Response {
     }
 }
 
-impl From<Response> for (u16, Cow<'static, str>) {
+impl From<Response> for (u16, Cow<'static, [u8]>) {
     fn from(response: Response) -> Self {
         (response.status, response.body.into())
     }
@@ -73,7 +127,7 @@ impl From<Result<Response, String>> for ResponseResult {
 }
 
 impl Response {
-    pub fn new(status: u16, body: Cow<'static, str>) -> Self {
+    pub fn new(status: u16, body: Cow<'static, [u8]>) -> Self {
         (status, body).into()
     }
 }
