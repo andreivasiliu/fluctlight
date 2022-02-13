@@ -120,7 +120,9 @@ impl Drop for LibraryAndState {
 
         // Ask the module to drop it so that panics don't cross the FFI boundary
         let destroy_state: Symbol<DestroyStateFunc> = unsafe {
-            library.get(b"destroy_state").expect("Could not load destroy_state symbol from library")
+            library
+                .get(b"destroy_state")
+                .expect("Could not load destroy_state symbol from library")
         };
 
         unsafe { destroy_state(state) };

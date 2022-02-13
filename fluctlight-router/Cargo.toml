@@ -10,8 +10,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 fluctlight-mod-interface = { path = "../fluctlight-mod-interface" }
-ruma-federation-api = { version = "0.3.1", features = ["server"] }
-ruma-api = "0.18.3"
 url = "2.2"
 smallvec = "1.8"
 http = "0.2.4"
+bumpalo = { version = "3.9", features = ["collections"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

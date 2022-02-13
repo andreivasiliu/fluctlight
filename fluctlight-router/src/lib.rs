@@ -2,8 +2,12 @@ use std::panic::catch_unwind;
 
 use fluctlight_mod_interface::{ModuleState, OpaqueModuleState, Request, ResponseResult};
 
+mod matrix_types;
+mod request;
+mod rest_api_types;
 mod router;
 mod routes_federation;
+mod state;
 
 #[no_mangle]
 pub extern "C" fn process_request<'a>(request: Request<'a>) -> ResponseResult {
@@ -12,7 +16,7 @@ pub extern "C" fn process_request<'a>(request: Request<'a>) -> ResponseResult {
     let response = catch_unwind(|| {
         let state_box = &request.module_state().state;
         let state = state_box
-            .downcast_ref::<State>()
+            .downcast_ref::<state::State>()
             .expect("Unexpected kind of module state.");
 
         router::try_process_request(state, request)
@@ -26,7 +30,7 @@ pub extern "C" fn process_request<'a>(request: Request<'a>) -> ResponseResult {
 
 #[no_mangle]
 pub extern "C" fn create_state() -> OpaqueModuleState {
-    let state = Box::new(State);
+    let state = Box::new(state::State::new());
 
     let module_state = ModuleState { state };
 
@@ -51,5 +55,3 @@ pub extern "C" fn destroy_state(module_state: OpaqueModuleState) -> bool {
         }
     }
 }
-
-pub(crate) struct State;
