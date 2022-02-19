@@ -1,9 +1,9 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, path::PathBuf};
 
 use fluctlight_mod_interface::{
     CreateStateFunc, DestroyStateFunc, OpaqueModuleState, ProcessRequestFunc, Request,
 };
-use libloading::{Library, Symbol};
+use libloading::{library_filename, Library, Symbol};
 use tokio::sync::RwLock;
 
 use crate::error::Result;
@@ -15,8 +15,19 @@ pub(crate) struct MainModule {
 struct LibraryAndState(Option<(Library, OpaqueModuleState)>);
 
 impl MainModule {
+    pub(crate) fn library_name() -> PathBuf {
+        let mut path = PathBuf::from("target");
+        path.push(if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        });
+        path.push(library_filename("fluctlight_router"));
+        path
+    }
+
     pub(crate) fn new() -> Result<Self> {
-        let library = unsafe { Library::new("target/debug/libfluctlight_router.so")? };
+        let library = unsafe { Library::new(Self::library_name())? };
 
         let create_state: Symbol<CreateStateFunc> = unsafe {
             library.get(b"create_state").map_err(|err| {
@@ -90,7 +101,7 @@ impl MainModule {
             .close()
             .map_err(|err| format!("Could not close module: {}", err))?;
         let library = unsafe {
-            Library::new("target/debug/libfluctlight_router.so")
+            Library::new(Self::library_name())
                 .map_err(|err| format!("Could not load module: {}", err))?
         };
 

@@ -7,6 +7,7 @@ mod request;
 mod rest_api_types;
 mod router;
 mod routes_federation;
+mod server_keys;
 mod state;
 
 #[no_mangle]

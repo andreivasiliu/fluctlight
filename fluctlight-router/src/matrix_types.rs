@@ -11,6 +11,10 @@ pub(crate) struct Id<T> {
 
 pub(crate) struct User;
 pub(crate) struct Device;
+pub(crate) struct Room;
+pub(crate) struct Event;
+pub(crate) struct ServerName;
+pub(crate) struct Key;
 
 pub(crate) trait MatrixId {
     fn validate(_string: &str) -> Result<(), String> {
@@ -18,8 +22,12 @@ pub(crate) trait MatrixId {
     }
 }
 
-impl MatrixId for User { }
-impl MatrixId for Device { }
+impl MatrixId for User {}
+impl MatrixId for Device {}
+impl MatrixId for Room {}
+impl MatrixId for Event {}
+impl MatrixId for ServerName {}
+impl MatrixId for Key {}
 
 impl<T> Id<T> {
     fn as_str(&self) -> &str {
@@ -28,13 +36,21 @@ impl<T> Id<T> {
 }
 
 impl<T: MatrixId> Id<T> {
-    pub fn from_str(string: &str) -> &Self {
-        // FIXME: Replace with try_from_str
-        T::validate(string)
-            .expect("Could not validate string");
+    pub fn try_from_str(string: &str) -> Result<&Self, String> {
+        T::validate(string)?;
         // SAFETY: repr(transparent) and the phantom's zero-size make these
         // types equivalent.
-        unsafe { std::mem::transmute(string) }
+        Ok(unsafe { std::mem::transmute(string) })
+    }
+
+    pub fn try_boxed_from_str(string: &str) -> Result<Box<Self>, String> {
+        T::validate(string)?;
+
+        let boxed: Box<str> = string.into();
+
+        // SAFETY: repr(transparent) and the phantom's zero-size make these
+        // types equivalent.
+        Ok(unsafe { std::mem::transmute(boxed) })
     }
 }
 
@@ -56,7 +72,7 @@ impl<T> PartialEq for Id<T> {
     }
 }
 
-impl<T> Eq for Id<T> { }
+impl<T> Eq for Id<T> {}
 impl<T> Ord for Id<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.as_str().cmp(other.as_str())
@@ -70,9 +86,18 @@ impl<'de: 'a, 'a, T: MatrixId> Deserialize<'de> for &'a Id<T> {
     {
         let string = <&str>::deserialize(deserializer)?;
 
-        T::validate(string)
-            .map_err(|err| serde::de::Error::custom(err))?;
+        Id::try_from_str(string).map_err(|err| serde::de::Error::custom(err))
+    }
+}
 
-        Ok(Id::from_str(string))
+impl<'de, T: MatrixId> Deserialize<'de> for Box<Id<T>> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let string = String::deserialize(deserializer)?;
+
+        // FIXME: convert in place
+        Id::try_boxed_from_str(&string).map_err(|err| serde::de::Error::custom(err))
     }
 }

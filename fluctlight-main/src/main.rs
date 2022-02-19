@@ -1,9 +1,10 @@
-use std::{convert::Infallible, net::SocketAddr, path::Path, sync::Arc};
+use std::{convert::Infallible, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use hyper::{
     service::{make_service_fn, service_fn},
     Body, Request, Response, Server,
 };
+use libloading::library_filename;
 use tokio_inotify::{AsyncINotify, IN_CREATE};
 
 use crate::error::Result;
@@ -59,11 +60,22 @@ fn main() -> Result<()> {
 async fn watch_module(main_module: Arc<MainModule>) {
     let inotify = AsyncINotify::init().expect("Failed to install inotify watcher");
 
-    let module_path = Path::new("target/debug");
-    let module_name = "libfluctlight_router.so";
+    let mut module_path = PathBuf::from("target");
+    module_path.push(if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    });
+    let module_name = library_filename("fluctlight_router");
     inotify
-        .add_watch(module_path, IN_CREATE)
+        .add_watch(&module_path, IN_CREATE)
         .expect("Failed to watch module path with inotify");
+
+    eprintln!(
+        "Installed watch on {} for {}",
+        module_path.display(),
+        module_name.to_string_lossy()
+    );
 
     use futures_util::compat::Stream01CompatExt;
     use futures_util::StreamExt;
@@ -72,10 +84,10 @@ async fn watch_module(main_module: Arc<MainModule>) {
     while let Some(event) = inotify_stream.next().await {
         let event = event.expect("Failed to get inotify event");
 
-        if event.is_create() && event.name.ends_with(module_name) {
+        if event.is_create() && event.name.ends_with(&module_name) {
             eprintln!("Received inotify event...");
             if let Err(err) = main_module.restart().await {
-                eprintln!("Could not restart module on inotify event: {}", err);
+                eprintln!("Could not restart module on inotify even2t: {}", err);
             }
         }
     }
