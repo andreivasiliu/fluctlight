@@ -5,8 +5,6 @@ use fluctlight_mod_interface::{ModuleState, OpaqueModuleState, Request, Response
 mod matrix_types;
 mod rendered_json;
 mod request;
-mod rest_api_types;
-mod router;
 mod routes_federation;
 mod server_keys;
 mod state;
@@ -21,7 +19,7 @@ pub extern "C" fn process_request<'a>(request: Request<'a>) -> ResponseResult {
             .downcast_ref::<state::State>()
             .expect("Unexpected kind of module state.");
 
-        router::try_process_request(state, request)
+        request::try_process_request(state, request)
     });
 
     response

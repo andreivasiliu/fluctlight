@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     matrix_types::{Id, Key, ServerName},
-    rest_api_types::get_federation_v1_version::Server,
     state::{ServerKeyPair, TimeStamp},
 };
 

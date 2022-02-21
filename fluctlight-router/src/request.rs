@@ -1,10 +1,9 @@
 use bumpalo::{collections::CollectIn, Bump};
+use fluctlight_mod_interface::{Request, Response};
 use serde::{de::MapAccess, forward_to_deserialize_any, Deserialize, Deserializer, Serialize};
+use smallvec::SmallVec;
 
-use crate::{
-    rest_api_types::{GenericRequest, MatrixRequest},
-    state::State,
-};
+use crate::{routes_federation::federation_api_handler, state::State};
 
 pub(crate) struct RequestData<'a> {
     pub memory_pool: &'a Bump,
@@ -71,6 +70,76 @@ impl<'r> RequestData<'r> {
         Ok(http_response)
     }
 }
+
+pub(super) fn try_process_request<'a>(
+    state: &State,
+    request: Request<'a>,
+) -> Result<Response, String> {
+    let mut uri_segments: SmallVec<[&str; 8]> = request.uri().split('/').collect();
+    uri_segments[0] = request.method();
+
+    let http_request = http::Request::builder()
+        .method(request.method())
+        .uri(request.uri())
+        .body(request.body())
+        .expect("Request should always be valid");
+
+    let memory_pool = bumpalo::Bump::with_capacity(256);
+    let request_data = RequestData {
+        memory_pool: &memory_pool,
+        state: &state,
+        http_request,
+    };
+
+    let http_response = if let Some(http_response) =
+        federation_api_handler(uri_segments.as_slice(), &request_data)
+    {
+        http_response
+    } else if let Some(http_response) =
+        federation_api_handler(uri_segments.as_slice(), &request_data)
+    {
+        http_response
+    } else {
+        return Ok(Response::new(404, b"Not found\n".as_slice().into()));
+    };
+
+    let http_response =
+        http_response.map_err(|err| format!("Could not process request: {}", err))?;
+    return Ok(Response::new(200, http_response.into_body().into()));
+}
+
+pub(crate) struct GenericRequest<Path, QueryString, Body> {
+    pub path: Path,
+    pub query_string: QueryString,
+    pub body: Body,
+}
+
+impl<'r, Path, QueryString, Body> GenericRequest<Path, QueryString, Body> {
+    pub fn new(path: Path, query_string: QueryString, body: Body) -> Self {
+        GenericRequest {
+            path,
+            query_string,
+            body,
+        }
+    }
+}
+
+pub(crate) trait MatrixRequest {
+    type Response;
+    const PATH_SPEC: &'static str;
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct EmptyPath<'a> {
+    #[serde(skip)]
+    phantom: std::marker::PhantomData<&'a ()>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct EmptyBody {}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct EmptyQS {}
 
 #[derive(Debug)]
 struct RequestDeserializationError(String);
@@ -211,7 +280,7 @@ impl<'de, 'a> Deserializer<'de> for &'a mut RequestPathFieldDeserializer<'de> {
         V: serde::de::Visitor<'de>,
     {
         match self.0 {
-            Some(value) => visitor.visit_some(self),
+            Some(_value) => visitor.visit_some(self),
             None => visitor.visit_none(),
         }
     }
