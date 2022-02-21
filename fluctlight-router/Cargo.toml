@@ -15,6 +15,6 @@ smallvec = "1.8"
 http = "0.2.4"
 bumpalo = { version = "3.9", features = ["collections"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }
 ed25519-compact = "1.0"
 base64 = "0.13"

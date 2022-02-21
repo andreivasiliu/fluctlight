@@ -13,7 +13,7 @@ pub(super) fn try_process_request<'a>(
     let http_request = http::Request::builder()
         .method(request.method())
         .uri(request.uri())
-        .body(b"".as_slice())
+        .body(request.body())
         .expect("Request should always be valid");
 
     let memory_pool = bumpalo::Bump::with_capacity(256);

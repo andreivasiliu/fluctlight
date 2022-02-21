@@ -54,11 +54,11 @@ impl<'r> RequestData<'r> {
         };
 
         let request_path = Path::deserialize(&mut path_deserializer)
-            .map_err(|err| format!("Could not deserialize request path: {}", err))?;
+            .map_err(|err| format!("Could not deserialize the request path: {}", err))?;
         let request_qs = serde_json::from_slice(b"{}")
-            .map_err(|err| format!("Could not deserialize request: {}", err))?;
+            .map_err(|err| format!("Could not deserialize the request's query string: {}", err))?;
         let request_body = serde_json::from_slice(body)
-            .map_err(|err| format!("Could not deserialize request: {}", err))?;
+            .map_err(|err| format!("Could not deserialize the request body: {}", err))?;
 
         let request = GenericRequest::new(request_path, request_qs, request_body);
         let response = handler(self, request);
@@ -95,7 +95,7 @@ impl serde::de::Error for RequestDeserializationError {
 struct RequestPathDeserializer<'de, 'a> {
     path_segments: &'a [&'de str],
     spec_segments: &'a [&'static str],
-    next_value: Option<&'de str>,
+    next_value: Option<Option<&'de str>>,
 }
 
 impl<'de, 'a> Deserializer<'de> for &'a mut RequestPathDeserializer<'de, 'a> {
@@ -124,34 +124,58 @@ impl<'de, 'a> MapAccess<'de> for RequestPathMapAccess<'de, 'a> {
     where
         K: serde::de::DeserializeSeed<'de>,
     {
-        while let Some(spec_segment) = self.0.spec_segments.first() {
-            if let Some(path_segment) = self.0.path_segments.first() {
-                self.0.spec_segments = &self.0.spec_segments[1..];
-                self.0.path_segments = &self.0.path_segments[1..];
+        loop {
+            let spec_segment = self.0.spec_segments.first();
+            let path_segment = self.0.path_segments.first();
 
-                if spec_segment.starts_with(":") || spec_segment.starts_with("?") {
-                    let variable_name = &spec_segment[1..];
-                    self.0.next_value = Some(path_segment);
-                    return seed
-                        .deserialize(&mut RequestPathFieldDeserializer(variable_name))
-                        .map(Some);
-                } else if spec_segment != path_segment {
-                    return Err(RequestDeserializationError(String::from(
-                        "Path does not match the requested path specification",
+            match (spec_segment, path_segment) {
+                (Some(spec_segment), Some(path_segment)) => {
+                    self.0.spec_segments = &self.0.spec_segments[1..];
+                    self.0.path_segments = &self.0.path_segments[1..];
+
+                    let is_variable = spec_segment.starts_with(":");
+                    let is_optional_variable = spec_segment.starts_with("?");
+
+                    if is_variable || is_optional_variable {
+                        let variable_name = Some(&spec_segment[1..]);
+                        self.0.next_value = Some(Some(path_segment));
+                        return seed
+                            .deserialize(&mut RequestPathFieldDeserializer(variable_name))
+                            .map(Some);
+                    } else if spec_segment == path_segment {
+                        continue;
+                    } else {
+                        return Err(RequestDeserializationError(String::from(
+                            "Path does not match the requested path specification",
+                        )));
+                    }
+                }
+                (None, Some(path_segment)) => {
+                    return Err(RequestDeserializationError(format!(
+                        "Unexpected segment in URI: '{}'",
+                        path_segment
                     )));
                 }
-            } else if spec_segment.starts_with("?") {
-                self.0.spec_segments = &self.0.spec_segments[1..];
-                // Optional segment(s), okay to be missing
-            } else {
-                return Err(RequestDeserializationError(format!(
-                    "Missing segment in URI path for {}",
-                    spec_segment
-                )));
+                (Some(spec_segment), None) => {
+                    if spec_segment.starts_with("?") {
+                        self.0.spec_segments = &self.0.spec_segments[1..];
+
+                        let variable_name = Some(&spec_segment[1..]);
+                        // Deserialize `None` values for missing segments
+                        self.0.next_value = Some(None);
+                        return seed
+                            .deserialize(&mut RequestPathFieldDeserializer(variable_name))
+                            .map(Some);
+                    } else {
+                        return Err(RequestDeserializationError(format!(
+                            "Missing segment in URI path for {}",
+                            spec_segment
+                        )));
+                    }
+                }
+                (None, None) => return Ok(None),
             }
         }
-
-        Ok(None)
     }
 
     fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
@@ -167,7 +191,7 @@ impl<'de, 'a> MapAccess<'de> for RequestPathMapAccess<'de, 'a> {
     }
 }
 
-struct RequestPathFieldDeserializer<'de>(&'de str);
+struct RequestPathFieldDeserializer<'de>(Option<&'de str>);
 
 impl<'de, 'a> Deserializer<'de> for &'a mut RequestPathFieldDeserializer<'de> {
     type Error = RequestDeserializationError;
@@ -176,12 +200,25 @@ impl<'de, 'a> Deserializer<'de> for &'a mut RequestPathFieldDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        visitor.visit_borrowed_str(self.0)
+        match self.0 {
+            Some(value) => visitor.visit_borrowed_str(value),
+            None => visitor.visit_none(),
+        }
+    }
+
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        match self.0 {
+            Some(value) => visitor.visit_some(self),
+            None => visitor.visit_none(),
+        }
     }
 
     forward_to_deserialize_any! {
         bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-        bytes byte_buf option unit unit_struct newtype_struct seq tuple
+        bytes byte_buf unit unit_struct newtype_struct seq tuple
         tuple_struct map struct enum identifier ignored_any
     }
 }

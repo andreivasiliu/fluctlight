@@ -46,6 +46,7 @@ impl MainModule {
         &self,
         uri: &str,
         method: &str,
+        body: &[u8],
     ) -> Result<(u16, Cow<'static, [u8]>)> {
         if uri == "/restart" {
             self.restart().await?;
@@ -67,7 +68,7 @@ impl MainModule {
                             err
                         )
                     })?;
-                entry_point(Request::new(module_state, uri, method))
+                entry_point(Request::new(module_state, uri, method, body))
             };
 
             let response = response.into_result()?;

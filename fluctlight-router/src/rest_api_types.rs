@@ -77,25 +77,24 @@ pub(crate) mod get_key_v2_server {
     impl<'a> MatrixRequest for Request<'a> {
         type Response = Response<'a>;
 
-        const PATH_SPEC: &'static str = "";
+        const PATH_SPEC: &'static str = "/_matrix/key/:version/server/?key_id";
     }
 
     #[derive(Serialize, Deserialize)]
     pub(crate) struct RequestPath<'a> {
+        pub version: &'a str,
         #[serde(borrow)]
         pub key_id: Option<&'a Id<Key>>,
     }
 
     #[derive(Serialize, Deserialize)]
     pub(crate) struct Response<'a> {
-        #[serde(borrow, skip_serializing_if = "BTreeMap::is_empty")]
-        pub old_verify_keys: BTreeMap<&'a Id<Key>, OldVerifyKey<'a>>,
+        #[serde(borrow)]
+        pub old_verify_keys: Option<BTreeMap<&'a Id<Key>, OldVerifyKey<'a>>>,
         pub server_name: &'a Id<ServerName>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         pub signatures: Option<Signatures<'a>>,
         pub valid_until_ts: Option<TimeStamp>,
-        #[serde(borrow, skip_serializing_if = "BTreeMap::is_empty")]
-        pub verify_keys: BTreeMap<&'a Id<Key>, VerifyKey<'a>>,
+        pub verify_keys: Option<BTreeMap<&'a Id<Key>, VerifyKey<'a>>>,
     }
 
     #[derive(Serialize, Deserialize)]
@@ -118,6 +117,8 @@ pub(crate) mod get_key_v2_server {
 }
 
 pub(crate) mod post_key_v2_query {
+    use crate::rendered_json::RenderedJson;
+
     use super::*;
 
     pub(crate) type Request<'a> = GenericRequest<RequestPath<'a>, EmptyQS, RequestBody<'a>>;
@@ -130,7 +131,7 @@ pub(crate) mod post_key_v2_query {
 
     #[derive(Serialize, Deserialize)]
     pub(crate) struct RequestPath<'a> {
-        pub version: Option<&'a str>,
+        pub version: &'a str,
     }
 
     #[derive(Serialize, Deserialize)]
@@ -139,10 +140,10 @@ pub(crate) mod post_key_v2_query {
         pub server_keys: BTreeMap<&'a Id<ServerName>, BTreeMap<&'a Id<Key>, TimeStamp>>,
     }
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize)]
     pub(crate) struct Response<'a> {
-        #[serde(borrow, skip_serializing_if = "Vec::is_empty")]
-        pub server_keys: Vec<ServerKeys<'a>>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        pub server_keys: Vec<&'a RenderedJson<'a, crate::server_keys::ServerKeys>>,
     }
 
     #[derive(Serialize, Deserialize)]

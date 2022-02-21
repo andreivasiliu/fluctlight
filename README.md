@@ -31,5 +31,6 @@ Currently implemented:
 * Requests use a per-request memory pool to store ephemeral strings and lists
 * Deserialized requests and response structures use borrowed data wherever
   possible
+* Requests use canned (pre-rendered) JSON snippets as part of the response
 
 For planned features, see [DESIGN.md](./DESIGN.md).

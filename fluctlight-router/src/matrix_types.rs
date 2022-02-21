@@ -40,7 +40,7 @@ impl<T: MatrixId> Id<T> {
         T::validate(string)?;
         // SAFETY: repr(transparent) and the phantom's zero-size make these
         // types equivalent.
-        Ok(unsafe { std::mem::transmute(string) })
+        Ok(unsafe { std::mem::transmute::<&str, &Id<T>>(string) })
     }
 
     pub fn try_boxed_from_str(string: &str) -> Result<Box<Self>, String> {
@@ -50,7 +50,7 @@ impl<T: MatrixId> Id<T> {
 
         // SAFETY: repr(transparent) and the phantom's zero-size make these
         // types equivalent.
-        Ok(unsafe { std::mem::transmute(boxed) })
+        Ok(unsafe { std::mem::transmute::<Box<str>, Box<Id<T>>>(boxed) })
     }
 }
 
@@ -76,6 +76,20 @@ impl<T> Eq for Id<T> {}
 impl<T> Ord for Id<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.as_str().cmp(other.as_str())
+    }
+}
+
+impl<T: MatrixId> Clone for Box<Id<T>> {
+    fn clone(&self) -> Self {
+        Id::<T>::try_boxed_from_str(self.as_str()).expect("Already validated")
+    }
+}
+
+impl<T: MatrixId> ToOwned for Id<T> {
+    type Owned = Box<Id<T>>;
+
+    fn to_owned(&self) -> Self::Owned {
+        Id::<T>::try_boxed_from_str(self.as_str()).expect("Already validated")
     }
 }
 

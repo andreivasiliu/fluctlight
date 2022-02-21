@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     matrix_types::{Id, Key, ServerName},
-    state::TimeStamp,
+    rest_api_types::get_federation_v1_version::Server,
+    state::{ServerKeyPair, TimeStamp},
 };
 
 #[derive(Serialize, Deserialize)]
@@ -30,8 +31,36 @@ pub(crate) struct VerifyKey {
     pub key: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 #[serde(transparent)]
 pub(crate) struct Signatures {
     pub signatures: BTreeMap<Box<Id<ServerName>>, BTreeMap<Box<Id<Key>>, String>>,
+}
+
+impl ServerKeys {
+    pub(crate) fn sign(
+        &mut self,
+        server_name: &Id<ServerName>,
+        server_key_pairs: &BTreeMap<Box<Id<Key>>, ServerKeyPair>,
+    ) {
+        let mut signatures = self.signatures.take().unwrap_or_default();
+        let mut server_signatures = BTreeMap::new();
+
+        let response_bytes =
+            serde_json::to_vec(&self).expect("Serialization should always succeed");
+
+        for (key_name, server_key) in server_key_pairs {
+            let noise = None;
+            let signature = server_key.key_pair.sk.sign(&response_bytes, noise);
+            let sig_b64 = base64::encode_config(&*signature, base64::STANDARD_NO_PAD);
+
+            server_signatures.insert(key_name.clone(), sig_b64);
+        }
+
+        signatures
+            .signatures
+            .insert(server_name.to_owned(), server_signatures);
+
+        self.signatures = Some(signatures);
+    }
 }

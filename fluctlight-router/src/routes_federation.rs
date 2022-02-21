@@ -1,8 +1,3 @@
-// use ruma_federation_api::discovery::{
-//     get_server_keys,
-//     get_server_version::{self, v1::Server},
-// };
-
 use std::collections::BTreeMap;
 
 use crate::{
@@ -21,7 +16,7 @@ pub(super) fn federation_api_handler<'r, 'h>(
             req.handle_with(get_federation_v1_version)
         }
         ["GET", "_matrix", "key", "v2", "server", ..] => req.handle_with(get_key_v2_server),
-        ["POST", "_matrix", "key", "v2", "query"] => todo!(),
+        ["POST", "_matrix", "key", "v2", "query"] => req.handle_with(post_key_v2_query),
         ["GET", "_matrix", "key", "v2", "query", _, _] => todo!(),
         ["PUT", "_matrix", "federation", "v1", "send", _] => todo!(),
         ["GET", "_matrix", "federation", "v1", "event_auth", _, _] => todo!(),
@@ -87,7 +82,8 @@ pub(super) fn get_key_v2_server<'r>(
 ) -> get_key_v2_server::Response<'r> {
     let mut verify_keys = BTreeMap::new();
 
-    for (key_name, server_key) in &request_data.state.server_keys {
+    // TODO: Change to prerendered JSON
+    for (key_name, server_key) in &request_data.state.server_key_pairs {
         if request.path.key_id.is_none() || Some(&**key_name) == request.path.key_id {
             verify_keys.insert(
                 &**key_name,
@@ -100,24 +96,25 @@ pub(super) fn get_key_v2_server<'r>(
 
     let valid_until_ts = request_data
         .state
-        .server_keys
+        .server_key_pairs
         .values()
         .map(|server_key| server_key.valid_until)
-        .min_by_key(|timestamp| timestamp.as_secs());
+        .min_by_key(|timestamp| timestamp.as_secs())
+        .expect("Server should always have at least one key");
 
     let mut response = get_key_v2_server::Response {
-        old_verify_keys: BTreeMap::new(),
+        old_verify_keys: Some(BTreeMap::new()),
         server_name: &*request_data.state.server_name,
         signatures: None,
-        valid_until_ts,
-        verify_keys,
+        valid_until_ts: Some(valid_until_ts),
+        verify_keys: Some(verify_keys),
     };
 
     let response_bytes =
         serde_json::to_vec(&response).expect("Serialization should always succeed");
     let mut server_signatures = BTreeMap::new();
 
-    for (key_name, server_key) in &request_data.state.server_keys {
+    for (key_name, server_key) in &request_data.state.server_key_pairs {
         let noise = None;
         let signature = server_key.key_pair.sk.sign(&response_bytes, noise);
         let sig_b64 = base64::encode_config(&*signature, base64::STANDARD_NO_PAD);
@@ -137,48 +134,19 @@ pub(super) fn post_key_v2_query<'r>(
     request_data: &RequestData<'r>,
     request: post_key_v2_query::Request<'r>,
 ) -> post_key_v2_query::Response<'r> {
-    let mut verify_keys = BTreeMap::new();
+    let mut server_keys = Vec::new();
 
     for (server_name, key_query) in request.body.server_keys {
-        if server_name == &*request_data.state.server_name {
-        } else {
+        // Ignore the query. The spec says: "The notary server may return
+        // multiple keys egardless of the Key IDs given."
+        let _ = key_query;
+
+        if let Some(foreign_server_keys_json) =
+            request_data.state.foreign_server_keys_json.get(server_name)
+        {
+            server_keys.push(foreign_server_keys_json);
         }
     }
-
-    let valid_until_ts = request_data
-        .state
-        .server_keys
-        .values()
-        .map(|server_key| server_key.valid_until)
-        .min_by_key(|timestamp| timestamp.as_secs());
-
-    let mut own_server_keys = post_key_v2_query::ServerKeys {
-        old_verify_keys: Some(BTreeMap::new()),
-        server_name: "fluctlight-dev.demi.ro",
-        signatures: None,
-        valid_until_ts,
-        verify_keys,
-    };
-
-    let response_bytes =
-        serde_json::to_vec(&own_server_keys).expect("Serialization should always succeed");
-    let mut server_signatures = BTreeMap::new();
-
-    for (key_name, server_key) in &request_data.state.server_keys {
-        let noise = None;
-        let signature = server_key.key_pair.sk.sign(&response_bytes, noise);
-        let sig_b64 = base64::encode_config(&*signature, base64::STANDARD_NO_PAD);
-
-        server_signatures.insert(&**key_name, sig_b64);
-    }
-
-    let mut signatures = BTreeMap::new();
-    signatures.insert(&*request_data.state.server_name, server_signatures);
-
-    own_server_keys.signatures = Some(post_key_v2_query::Signatures { signatures });
-
-    let mut server_keys = Vec::new();
-    server_keys.push(own_server_keys);
 
     post_key_v2_query::Response { server_keys }
 }

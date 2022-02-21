@@ -35,7 +35,7 @@ fn main() -> Result<()> {
             async {
                 Ok::<_, Infallible>(service_fn(move |request: Request<Body>| {
                     let main_module = main_module.clone();
-                    hello_world(main_module, request)
+                    process_request_in_module(main_module, request)
                 }))
             }
         });
@@ -87,7 +87,7 @@ async fn watch_module(main_module: Arc<MainModule>) {
         if event.is_create() && event.name.ends_with(&module_name) {
             eprintln!("Received inotify event...");
             if let Err(err) = main_module.restart().await {
-                eprintln!("Could not restart module on inotify even2t: {}", err);
+                eprintln!("Could not restart module on inotify event: {}", err);
             }
         }
     }
@@ -101,23 +101,40 @@ async fn shutdown_signal() {
     eprintln!("\nInterrupt signal received, shutting down...")
 }
 
-async fn hello_world(
+async fn process_request_in_module(
     main_module: Arc<MainModule>,
-    req: Request<Body>,
+    mut req: Request<Body>,
 ) -> std::result::Result<Response<Body>, Infallible> {
+    // FIXME: fix unwrap
+    let body = hyper::body::to_bytes(req.body_mut())
+        .await
+        .unwrap()
+        .to_vec();
     let (status, body) = match main_module
-        .process_request(req.uri().path(), req.method().as_str())
+        .process_request(req.uri().path(), req.method().as_str(), &body)
         .await
     {
         Ok(response) => response,
         Err(err) => {
             eprintln!("Fatal error: {}", err);
-            (500, "Internal server error\n".as_bytes().into())
+            (
+                500,
+                format!("Internal server error\n\n{}\n", err)
+                    .into_bytes()
+                    .into(),
+            )
         }
+    };
+
+    let content_type = if status == 200 && !body.is_empty() {
+        "application/json"
+    } else {
+        "plain/text"
     };
 
     Ok(Response::builder()
         .status(status)
+        .header("Content-Type", content_type)
         .body(body.into())
         .expect("Status and body should be valid"))
 }

@@ -2,7 +2,7 @@ use std::{any::Any, borrow::Cow};
 
 use abi_stable::{
     erased_types::TypeInfo,
-    std_types::{RBox, RCow, RStr, RString},
+    std_types::{RBox, RCow, RSlice, RStr, RString},
     DynTrait, ImplType, StableAbi,
 };
 
@@ -14,6 +14,7 @@ pub struct Request<'a> {
     module_state: &'a OpaqueModuleState,
     uri: RStr<'a>,
     method: RStr<'a>,
+    body: RSlice<'a, u8>,
 }
 
 #[derive(StableAbi)]
@@ -79,11 +80,17 @@ pub type CreateStateFunc<'a> = unsafe extern "C" fn() -> OpaqueModuleState;
 pub type DestroyStateFunc<'a> = unsafe extern "C" fn(OpaqueModuleState) -> bool;
 
 impl<'a> Request<'a> {
-    pub fn new(module_state: &'a OpaqueModuleState, uri: &'a str, method: &'a str) -> Self {
+    pub fn new(
+        module_state: &'a OpaqueModuleState,
+        uri: &'a str,
+        method: &'a str,
+        body: &'a [u8],
+    ) -> Self {
         Request {
             module_state,
             uri: uri.into(),
             method: method.into(),
+            body: body.into(),
         }
     }
 
@@ -97,6 +104,10 @@ impl<'a> Request<'a> {
 
     pub fn method(&self) -> &'a str {
         self.method.into()
+    }
+
+    pub fn body(&self) -> &'a [u8] {
+        self.body.into()
     }
 }
 
