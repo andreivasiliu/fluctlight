@@ -46,4 +46,4 @@ Memory shenanigans:
 * weak-table: Maybe for some shenanigans?
 * servo's interned arc string
 * SortedMap<&[u8]>: an already-sorted vec, used as a map
-* typed-index-collections: 
+* ouroboros: a PDU's RawValue plus deserialized PDU referencing it

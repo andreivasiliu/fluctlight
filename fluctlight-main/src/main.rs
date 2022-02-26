@@ -105,26 +105,13 @@ async fn process_request_in_module(
     main_module: Arc<MainModule>,
     mut req: Request<Body>,
 ) -> std::result::Result<Response<Body>, Infallible> {
+    let (parts, body) = req.into_parts();
     // FIXME: fix unwrap
-    let body = hyper::body::to_bytes(req.body_mut())
-        .await
-        .unwrap()
-        .to_vec();
-    let (status, body) = match main_module
-        .process_request(req.uri().path(), req.method().as_str(), &body)
-        .await
-    {
-        Ok(response) => response,
-        Err(err) => {
-            eprintln!("Fatal error: {}", err);
-            (
-                500,
-                format!("Internal server error\n\n{}\n", err)
-                    .into_bytes()
-                    .into(),
-            )
-        }
-    };
+    let body = hyper::body::to_bytes(body).await.unwrap().to_vec();
+    let uri = parts.uri;
+    let method = parts.method;
+
+    let (status, body) = main_module.process_request(uri, method, body).await;
 
     let content_type = if status == 200 && !body.is_empty() {
         "application/json"

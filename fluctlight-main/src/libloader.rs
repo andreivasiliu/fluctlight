@@ -1,15 +1,16 @@
-use std::{borrow::Cow, path::PathBuf};
+use std::{borrow::Cow, path::PathBuf, sync::Arc};
 
 use fluctlight_mod_interface::{
     CreateStateFunc, DestroyStateFunc, OpaqueModuleState, ProcessRequestFunc, Request,
 };
+use hyper::{Method, Uri};
 use libloading::{library_filename, Library, Symbol};
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, task::spawn_blocking};
 
 use crate::error::Result;
 
 pub(crate) struct MainModule {
-    library: RwLock<LibraryAndState>,
+    library: Arc<RwLock<LibraryAndState>>,
 }
 
 struct LibraryAndState(Option<(Library, OpaqueModuleState)>);
@@ -38,42 +39,32 @@ impl MainModule {
         let module_state = unsafe { create_state() };
 
         Ok(MainModule {
-            library: RwLock::new(LibraryAndState(Some((library, module_state)))),
+            library: Arc::new(RwLock::new(LibraryAndState(Some((library, module_state))))),
         })
     }
 
     pub(crate) async fn process_request(
         &self,
-        uri: &str,
-        method: &str,
-        body: &[u8],
-    ) -> Result<(u16, Cow<'static, [u8]>)> {
+        uri: Uri,
+        method: Method,
+        body: Vec<u8>,
+    ) -> (u16, Cow<'static, [u8]>) {
         if uri == "/restart" {
-            self.restart().await?;
+            eprintln!("Acquiring module write lock...");
 
-            Ok((200, "Restarted.\n".as_bytes().into()))
+            let mut module = self.library.write().await;
+            let result = module
+                .restart()
+                .map(|()| (200, "Restarted.\n".as_bytes().into()));
+            result_to_http_response(result)
         } else {
-            let library = self.library.read().await;
+            let library = self.library.clone().read_owned().await;
 
-            let (library, module_state) = library.0.as_ref().ok_or("Module not loaded")?;
+            let response = spawn_blocking(move || {
+                result_to_http_response(library.process_request(uri, method, body))
+            });
 
-            // SAFETY: The library is trusted, and uses abi_stable
-            // Although if `ProcessRequestFunc`'s types are out of sync, all
-            // hell will break loose.
-            let response = unsafe {
-                let entry_point: Symbol<ProcessRequestFunc> =
-                    library.get(b"process_request").map_err(|err| {
-                        format!(
-                            "Could not load process_request symbol from library: {}",
-                            err
-                        )
-                    })?;
-                entry_point(Request::new(module_state, uri, method, body))
-            };
-
-            let response = response.into_result()?;
-
-            Ok(response.into())
+            response.await.expect("Process handler should never panic")
         }
     }
 
@@ -81,6 +72,57 @@ impl MainModule {
         eprintln!("Acquiring module lock...");
 
         let mut module = self.library.write().await;
+        module.restart()
+    }
+}
+
+fn result_to_http_response(result: Result<(u16, Cow<'static, [u8]>)>) -> (u16, Cow<'static, [u8]>) {
+    match result {
+        Ok(response) => response,
+        Err(err) => {
+            eprintln!("Fatal error: {}", err);
+            (
+                500,
+                format!("Internal server error\n\n{}\n", err)
+                    .into_bytes()
+                    .into(),
+            )
+        }
+    }
+}
+
+impl LibraryAndState {
+    fn process_request(
+        &self,
+        uri: Uri,
+        method: Method,
+        body: Vec<u8>,
+    ) -> Result<(u16, Cow<'static, [u8]>)> {
+        let (library, module_state) = self.0.as_ref().ok_or("Module not loaded")?;
+
+        // SAFETY: The library is trusted, and uses abi_stable
+        // Although if `ProcessRequestFunc`'s types are out of sync, all
+        // hell will break loose.
+        let module_response = unsafe {
+            let entry_point: Symbol<ProcessRequestFunc> =
+                library.get(b"process_request").map_err(|err| {
+                    format!(
+                        "Could not load process_request symbol from library: {}",
+                        err
+                    )
+                })?;
+            entry_point(Request::new(
+                module_state,
+                uri.path(),
+                method.as_str(),
+                body.as_slice(),
+            ))
+        };
+        Ok(module_response.into_result()?.into())
+    }
+
+    fn restart(&mut self) -> Result<()> {
+        let module = self;
 
         eprintln!("Restarting...");
 
@@ -102,7 +144,7 @@ impl MainModule {
             .close()
             .map_err(|err| format!("Could not close module: {}", err))?;
         let library = unsafe {
-            Library::new(Self::library_name())
+            Library::new(MainModule::library_name())
                 .map_err(|err| format!("Could not load module: {}", err))?
         };
 

@@ -1,13 +1,17 @@
 use crate::request::RequestData;
 
 use self::{
-    get_key_server::get_key_v2_server, get_version::get_federation_v1_version,
-    post_key_query::post_key_v2_query,
+    get_key_server::get_key_v2_server, get_state::get_federation_v1_state,
+    get_user_devices::get_federation_v1_user_devices, get_version::get_federation_v1_version,
+    post_key_query::post_key_v2_query, put_send::put_federation_v1_send,
 };
 
-pub(crate) mod get_key_server;
-pub(crate) mod get_version;
-pub(crate) mod post_key_query;
+mod get_key_server;
+mod get_state;
+mod get_user_devices;
+mod get_version;
+mod post_key_query;
+mod put_send;
 
 pub(super) fn federation_api_handler<'r, 'h>(
     uri_segments: &[&str],
@@ -22,12 +26,16 @@ pub(super) fn federation_api_handler<'r, 'h>(
         ["GET", "_matrix", "key", "v2", "server", ..] => req.handle_with(get_key_v2_server),
         ["POST", "_matrix", "key", "v2", "query"] => req.handle_with(post_key_v2_query),
         ["GET", "_matrix", "key", "v2", "query", _, _] => todo!(),
-        ["PUT", "_matrix", "federation", "v1", "send", _] => todo!(),
+        ["PUT", "_matrix", "federation", "v1", "send", _] => {
+            req.handle_with(put_federation_v1_send)
+        }
         ["GET", "_matrix", "federation", "v1", "event_auth", _, _] => todo!(),
         ["GET", "_matrix", "federation", "v1", "backfill", _] => todo!(),
         ["POST", "_matrix", "federation", "v1", "get_missing_events", _] => todo!(),
         ["GET", "_matrix", "federation", "v1", "event", _] => todo!(),
-        ["GET", "_matrix", "federation", "v1", "state", _] => todo!(),
+        ["GET", "_matrix", "federation", "v1", "state", _] => {
+            req.handle_with(get_federation_v1_state)
+        }
         ["GET", "_matrix", "federation", "v1", "state_ids", _] => todo!(),
         ["GET", "_matrix", "federation", "v1", "make_join", _, _] => todo!(),
         ["PUT", "_matrix", "federation", "v1", "send_join", _, _] => todo!(),
@@ -47,7 +55,9 @@ pub(super) fn federation_api_handler<'r, 'h>(
         ["GET", "_matrix", "federation", "v1", "query", "directory"] => todo!(),
         ["GET", "_matrix", "federation", "v1", "query", "profile"] => todo!(),
         ["GET", "_matrix", "federation", "v1", "query", _] => todo!(),
-        ["GET", "_matrix", "federation", "v1", "user", "devices", _] => todo!(),
+        ["GET", "_matrix", "federation", "v1", "user", "devices", _] => {
+            req.handle_with(get_federation_v1_user_devices)
+        }
         ["POST", "_matrix", "federation", "v1", "user", "keys", "claim"] => todo!(),
         ["POST", "_matrix", "federation", "v1", "user", "keys", "query"] => {
             // req.handle_with(post_federation_v2_user_keys_query)

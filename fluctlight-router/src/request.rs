@@ -1,9 +1,14 @@
+use std::borrow::Cow;
+
 use bumpalo::{collections::CollectIn, Bump};
 use fluctlight_mod_interface::{Request, Response};
+use percent_encoding::{percent_decode, percent_decode_str};
 use serde::{de::MapAccess, forward_to_deserialize_any, Deserialize, Deserializer, Serialize};
 use smallvec::SmallVec;
 
-use crate::{routes_federation::federation_api_handler, state::State};
+use crate::{
+    routes_admin::admin_api_handler, routes_federation::federation_api_handler, state::State,
+};
 
 pub(crate) struct RequestData<'a> {
     pub memory_pool: &'a Bump,
@@ -78,9 +83,13 @@ pub(super) fn try_process_request<'a>(
     let mut uri_segments: SmallVec<[&str; 8]> = request.uri().split('/').collect();
     uri_segments[0] = request.method();
 
+    let path = percent_decode_str(request.uri())
+        .decode_utf8_lossy()
+        .to_string();
+
     let http_request = http::Request::builder()
         .method(request.method())
-        .uri(request.uri())
+        .uri(&path)
         .body(request.body())
         .expect("Request should always be valid");
 
@@ -95,9 +104,7 @@ pub(super) fn try_process_request<'a>(
         federation_api_handler(uri_segments.as_slice(), &request_data)
     {
         http_response
-    } else if let Some(http_response) =
-        federation_api_handler(uri_segments.as_slice(), &request_data)
-    {
+    } else if let Some(http_response) = admin_api_handler(uri_segments.as_slice(), &request_data) {
         http_response
     } else {
         return Ok(Response::new(404, b"Not found\n".as_slice().into()));
@@ -161,6 +168,7 @@ impl serde::de::Error for RequestDeserializationError {
     }
 }
 
+// Request URI path deserializer
 struct RequestPathDeserializer<'de, 'a> {
     path_segments: &'a [&'de str],
     spec_segments: &'a [&'static str],

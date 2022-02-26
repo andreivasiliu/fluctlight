@@ -29,6 +29,7 @@ pub(super) struct Response<'a> {
     #[serde(borrow)]
     old_verify_keys: Option<BTreeMap<&'a Id<Key>, OldVerifyKey<'a>>>,
     server_name: &'a Id<ServerName>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     signatures: Option<Signatures<'a>>,
     valid_until_ts: Option<TimeStamp>,
     verify_keys: Option<BTreeMap<&'a Id<Key>, VerifyKey<'a>>>,
@@ -75,7 +76,7 @@ pub(super) fn get_key_v2_server<'r>(
         .server_key_pairs
         .values()
         .map(|server_key| server_key.valid_until)
-        .min_by_key(|timestamp| timestamp.as_secs())
+        .min_by_key(|timestamp| timestamp.as_millis())
         .expect("Server should always have at least one key");
 
     let mut response = Response {
@@ -89,6 +90,11 @@ pub(super) fn get_key_v2_server<'r>(
     let response_bytes =
         serde_json::to_vec(&response).expect("Serialization should always succeed");
     let mut server_signatures = BTreeMap::new();
+
+    eprintln!(
+        "Signing key response bytes:\n---\n{}\n---\n",
+        String::from_utf8_lossy(&response_bytes)
+    );
 
     for (key_name, server_key) in &request_data.state.server_key_pairs {
         let noise = None;

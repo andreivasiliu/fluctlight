@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     io::Write,
+    sync::{MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard},
     time::{Duration, SystemTime},
 };
 
@@ -8,7 +9,7 @@ use ed25519_compact::KeyPair;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    matrix_types::{Id, Key, ServerName},
+    matrix_types::{Id, Key, Room, ServerName},
     rendered_json::RenderedJson,
     server_keys::{ServerKeys, VerifyKey},
 };
@@ -19,6 +20,13 @@ pub(crate) struct State {
     pub server_name: Box<Id<ServerName>>,
     pub foreign_server_keys: BTreeMap<Box<Id<ServerName>>, ServerKeys>,
     pub foreign_server_keys_json: BTreeMap<Box<Id<ServerName>>, RenderedJson<'static, ServerKeys>>,
+    persistent: RwLock<Persistent>,
+}
+
+// TODO: Just a quick and dirty persistence store; needs to be fundamentally different
+#[derive(Serialize, Deserialize)]
+pub(crate) struct Persistent {
+    pub rooms: BTreeMap<Box<Id<Room>>, RoomState>,
 }
 
 // pub(crate) struct UserState {
@@ -26,6 +34,11 @@ pub(crate) struct State {
 //     pub(crate) devices: Vec<Box<Id<Device>>>,
 //     pub keys: Vec<(Box<Id<Device>>, ())>,
 // }
+
+#[derive(Serialize, Deserialize, Default)]
+pub(crate) struct RoomState {
+    pub pdu_blobs: Vec<String>,
+}
 
 #[derive(Clone)]
 pub(crate) struct ServerKeyPair {
@@ -41,9 +54,9 @@ pub(crate) struct ServerKeyPairBase64 {
     pub valid_until: TimeStamp,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 #[serde(transparent)]
-pub(crate) struct TimeStamp(u64);
+pub(crate) struct TimeStamp(u128);
 
 impl TimeStamp {
     pub fn one_week_from_now() -> Self {
@@ -53,11 +66,20 @@ impl TimeStamp {
                 .expect("Should always be in range")
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("Should always be positive")
-                .as_secs(),
+                .as_millis(),
         )
     }
 
-    pub fn as_secs(&self) -> u64 {
+    pub fn now() -> Self {
+        let now = SystemTime::now();
+        TimeStamp(
+            now.duration_since(std::time::UNIX_EPOCH)
+                .expect("Should always be positive")
+                .as_millis(),
+        )
+    }
+
+    pub fn as_millis(&self) -> u128 {
         self.0
     }
 }
@@ -81,7 +103,7 @@ impl State {
         let valid_until_ts = server_key_pairs
             .values()
             .map(|server_key| server_key.valid_until)
-            .min_by_key(|timestamp| timestamp.as_secs())
+            .min_by_key(|timestamp| timestamp.as_millis())
             .expect("Server should always have at least one key");
 
         let mut server_keys = ServerKeys {
@@ -100,13 +122,64 @@ impl State {
         foreign_server_keys_json.insert(server_name.clone(), rendered_json);
         foreign_server_keys.insert(server_name, server_keys);
 
+        let persistent = Persistent::load();
+
         State {
             // users: BTreeMap::new(),
             server_key_pairs,
             server_name: Id::try_boxed_from_str("fluctlight-dev.demi.ro").unwrap(),
             foreign_server_keys,
             foreign_server_keys_json,
+            persistent: RwLock::new(persistent),
         }
+    }
+
+    pub fn persistent(&self) -> RwLockReadGuard<Persistent> {
+        // TODO: corrupted; should use an older backup instead
+        match self.persistent.read() {
+            Ok(guard) => guard,
+            Err(poison_error) => poison_error.into_inner(),
+        }
+    }
+
+    pub fn with_persistent_mut<R, F>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut Persistent) -> R,
+    {
+        let mut persistent = self
+            .persistent
+            .write()
+            .expect("Lock poisoned; cannot do more changes on corrupt data");
+
+        // TODO: maybe reload from disk on panics and unpoison
+        let result = f(&mut *persistent);
+
+        persistent.save();
+
+        result
+    }
+}
+
+impl Persistent {
+    fn load() -> Self {
+        if !std::path::Path::new("persistent.json").exists() {
+            eprintln!("Creating new persistent state...");
+            return Persistent {
+                rooms: BTreeMap::new(),
+            };
+        }
+
+        // FIXME: fix unwraps
+        let persistent_file = std::fs::File::open("persistent.json").unwrap();
+        serde_json::from_reader(persistent_file).unwrap()
+    }
+
+    fn save(&self) {
+        // FIXME: fix unwraps
+        let persistent_file = std::fs::File::create("persistent.json").unwrap();
+
+        // FIXME: fix unwraps
+        serde_json::to_writer_pretty(persistent_file, self).unwrap();
     }
 }
 

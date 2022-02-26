@@ -5,7 +5,9 @@ use fluctlight_mod_interface::{ModuleState, OpaqueModuleState, Request, Response
 mod matrix_types;
 mod rendered_json;
 mod request;
+mod routes_admin;
 mod routes_federation;
+mod send;
 mod server_keys;
 mod state;
 
