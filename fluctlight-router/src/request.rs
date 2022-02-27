@@ -1,8 +1,7 @@
-use std::borrow::Cow;
-
+use askama::Template;
 use bumpalo::{collections::CollectIn, Bump};
 use fluctlight_mod_interface::{Request, Response};
-use percent_encoding::{percent_decode, percent_decode_str};
+use percent_encoding::percent_decode_str;
 use serde::{de::MapAccess, forward_to_deserialize_any, Deserialize, Deserializer, Serialize};
 use smallvec::SmallVec;
 
@@ -70,7 +69,62 @@ impl<'r> RequestData<'r> {
             .map_err(|err| format!("Could not serialize response: {}", err))?;
         response_bytes.push(b'\n');
         let http_response = http::Response::builder()
+            .header("Content-Type", "application/json")
             .body(response_bytes)
+            .expect("Response should always be valid");
+        Ok(http_response)
+    }
+
+    pub fn render_template_with<F, Path, QueryString, Body>(
+        &'r self,
+        handler: F,
+    ) -> Result<http::Response<Vec<u8>>, String>
+    where
+        F: Fn(
+            &RequestData<'r>,
+            GenericRequest<Path, QueryString, Body>,
+        ) -> <GenericRequest<Path, QueryString, Body> as MatrixRequest>::Response,
+        GenericRequest<Path, QueryString, Body>: MatrixRequest,
+        Path: Deserialize<'r>,
+        QueryString: Deserialize<'r>,
+        Body: Deserialize<'r>,
+        <GenericRequest<Path, QueryString, Body> as MatrixRequest>::Response: Template,
+    {
+        let body = if self.http_request.method() == "GET" {
+            b"{}".as_slice()
+        } else {
+            self.http_request.body()
+        };
+
+        type BumpVec<'b, T> = bumpalo::collections::Vec<'b, T>;
+
+        let path = self.http_request.uri().path();
+        let path_segments: BumpVec<_> = path.split('/').collect_in(self.memory_pool);
+        let spec = <GenericRequest<Path, QueryString, Body> as MatrixRequest>::PATH_SPEC;
+        let spec_segments: BumpVec<_> = spec.split('/').collect_in(self.memory_pool);
+
+        let mut path_deserializer = RequestPathDeserializer {
+            path_segments: &path_segments,
+            spec_segments: &spec_segments,
+            next_value: None,
+        };
+
+        let request_path = Path::deserialize(&mut path_deserializer)
+            .map_err(|err| format!("Could not deserialize the request path: {}", err))?;
+        let request_qs = serde_json::from_slice(b"{}")
+            .map_err(|err| format!("Could not deserialize the request's query string: {}", err))?;
+        let request_body = serde_json::from_slice(body)
+            .map_err(|err| format!("Could not deserialize the request body: {}", err))?;
+
+        let request = GenericRequest::new(request_path, request_qs, request_body);
+        let response = handler(self, request);
+
+        let response_bytes = response
+            .render()
+            .map_err(|err| format!("Could not render response from template: {}", err))?;
+        let http_response = http::Response::builder()
+            .header("Content-Type", "text/html")
+            .body(response_bytes.into_bytes())
             .expect("Response should always be valid");
         Ok(http_response)
     }
@@ -107,17 +161,36 @@ pub(super) fn try_process_request<'a>(
     } else if let Some(http_response) = admin_api_handler(uri_segments.as_slice(), &request_data) {
         http_response
     } else {
-        return Ok(Response::new(404, b"Not found\n".as_slice().into()));
+        return Ok(Response::new(
+            404,
+            "text/plain",
+            b"Not found\n".as_slice().into(),
+        ));
     };
 
     let http_response =
         http_response.map_err(|err| format!("Could not process request: {}", err))?;
-    return Ok(Response::new(200, http_response.into_body().into()));
+
+    let content_type = match http_response
+        .headers()
+        .get("Content-Type")
+        .map(|value| value.to_str())
+    {
+        Some(Ok("application/json")) => "application/json",
+        Some(Ok("text/html")) => "text/html",
+        Some(_) | None => "text/plain",
+    };
+
+    return Ok(Response::new(
+        200,
+        content_type,
+        http_response.into_body().into(),
+    ));
 }
 
 pub(crate) struct GenericRequest<Path, QueryString, Body> {
     pub path: Path,
-    pub query_string: QueryString,
+    pub _query_string: QueryString,
     pub body: Body,
 }
 
@@ -125,7 +198,7 @@ impl<'r, Path, QueryString, Body> GenericRequest<Path, QueryString, Body> {
     pub fn new(path: Path, query_string: QueryString, body: Body) -> Self {
         GenericRequest {
             path,
-            query_string,
+            _query_string: query_string,
             body,
         }
     }

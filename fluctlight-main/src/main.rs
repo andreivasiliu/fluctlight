@@ -103,7 +103,7 @@ async fn shutdown_signal() {
 
 async fn process_request_in_module(
     main_module: Arc<MainModule>,
-    mut req: Request<Body>,
+    req: Request<Body>,
 ) -> std::result::Result<Response<Body>, Infallible> {
     let (parts, body) = req.into_parts();
     // FIXME: fix unwrap
@@ -111,13 +111,7 @@ async fn process_request_in_module(
     let uri = parts.uri;
     let method = parts.method;
 
-    let (status, body) = main_module.process_request(uri, method, body).await;
-
-    let content_type = if status == 200 && !body.is_empty() {
-        "application/json"
-    } else {
-        "plain/text"
-    };
+    let (status, content_type, body) = main_module.process_request(uri, method, body).await;
 
     Ok(Response::builder()
         .status(status)

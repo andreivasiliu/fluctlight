@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     io::Write,
-    sync::{MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    sync::{RwLock, RwLockReadGuard},
     time::{Duration, SystemTime},
 };
 
@@ -21,11 +21,17 @@ pub(crate) struct State {
     pub foreign_server_keys: BTreeMap<Box<Id<ServerName>>, ServerKeys>,
     pub foreign_server_keys_json: BTreeMap<Box<Id<ServerName>>, RenderedJson<'static, ServerKeys>>,
     persistent: RwLock<Persistent>,
+    ephemeral: RwLock<Ephemeral>,
 }
 
 // TODO: Just a quick and dirty persistence store; needs to be fundamentally different
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Persistent {
+    pub rooms: BTreeMap<Box<Id<Room>>, RoomState>,
+}
+
+// TODO: Same as above, but even quicker, and even dirtier
+pub(crate) struct Ephemeral {
     pub rooms: BTreeMap<Box<Id<Room>>, RoomState>,
 }
 
@@ -123,6 +129,9 @@ impl State {
         foreign_server_keys.insert(server_name, server_keys);
 
         let persistent = Persistent::load();
+        let ephemeral = Ephemeral {
+            rooms: BTreeMap::new(),
+        };
 
         State {
             // users: BTreeMap::new(),
@@ -131,6 +140,7 @@ impl State {
             foreign_server_keys,
             foreign_server_keys_json,
             persistent: RwLock::new(persistent),
+            ephemeral: RwLock::new(ephemeral),
         }
     }
 
@@ -157,6 +167,27 @@ impl State {
         persistent.save();
 
         result
+    }
+
+    pub fn ephemeral(&self) -> RwLockReadGuard<Ephemeral> {
+        // TODO: corrupted; should use an older backup instead
+        match self.ephemeral.read() {
+            Ok(guard) => guard,
+            Err(poison_error) => poison_error.into_inner(),
+        }
+    }
+
+    pub fn with_ephemeral_mut<R, F>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut Ephemeral) -> R,
+    {
+        let mut ephemeral = self
+            .ephemeral
+            .write()
+            .expect("Lock poisoned; cannot do more changes on corrupt data");
+
+        // Mimic the persistent interface to catch lifetime issues early
+        f(&mut *ephemeral)
     }
 }
 

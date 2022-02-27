@@ -48,14 +48,14 @@ impl MainModule {
         uri: Uri,
         method: Method,
         body: Vec<u8>,
-    ) -> (u16, Cow<'static, [u8]>) {
+    ) -> (u16, &'static str, Cow<'static, [u8]>) {
         if uri == "/restart" {
             eprintln!("Acquiring module write lock...");
 
             let mut module = self.library.write().await;
             let result = module
                 .restart()
-                .map(|()| (200, "Restarted.\n".as_bytes().into()));
+                .map(|()| (200, "text/plain", "Restarted.\n".as_bytes().into()));
             result_to_http_response(result)
         } else {
             let library = self.library.clone().read_owned().await;
@@ -76,13 +76,16 @@ impl MainModule {
     }
 }
 
-fn result_to_http_response(result: Result<(u16, Cow<'static, [u8]>)>) -> (u16, Cow<'static, [u8]>) {
+fn result_to_http_response(
+    result: Result<(u16, &'static str, Cow<'static, [u8]>)>,
+) -> (u16, &'static str, Cow<'static, [u8]>) {
     match result {
         Ok(response) => response,
         Err(err) => {
             eprintln!("Fatal error: {}", err);
             (
                 500,
+                "text/plain",
                 format!("Internal server error\n\n{}\n", err)
                     .into_bytes()
                     .into(),
@@ -97,7 +100,7 @@ impl LibraryAndState {
         uri: Uri,
         method: Method,
         body: Vec<u8>,
-    ) -> Result<(u16, Cow<'static, [u8]>)> {
+    ) -> Result<(u16, &'static str, Cow<'static, [u8]>)> {
         let (library, module_state) = self.0.as_ref().ok_or("Module not loaded")?;
 
         // SAFETY: The library is trusted, and uses abi_stable

@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    playground::send_request,
+    playground::load_room,
     request::{EmptyBody, EmptyQS, GenericRequest, MatrixRequest, RequestData},
 };
 
@@ -11,7 +11,7 @@ type Request<'a> = GenericRequest<RequestPath<'a>, EmptyQS, EmptyBody>;
 impl<'a> MatrixRequest for Request<'a> {
     type Response = Response<'a>;
 
-    const PATH_SPEC: &'static str = "/admin/send";
+    const PATH_SPEC: &'static str = "/admin/load";
 }
 
 #[derive(Serialize, Deserialize)]
@@ -25,13 +25,13 @@ pub(super) struct Response<'a> {
     text: &'a str,
 }
 
-pub(super) fn get_admin_send<'r>(
+pub(super) fn get_admin_load<'r>(
     request_data: &RequestData<'r>,
     _request: Request<'r>,
 ) -> Response<'r> {
     let text = request_data.new_str("Hello");
 
-    match send_request(&request_data.state) {
+    match load_room(&request_data.state) {
         Ok(value) => value,
         Err(err) => {
             eprintln!("Error: {}", err);

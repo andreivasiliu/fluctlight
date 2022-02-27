@@ -3,11 +3,11 @@ use std::panic::catch_unwind;
 use fluctlight_mod_interface::{ModuleState, OpaqueModuleState, Request, ResponseResult};
 
 mod matrix_types;
+mod playground;
 mod rendered_json;
 mod request;
 mod routes_admin;
 mod routes_federation;
-mod send;
 mod server_keys;
 mod state;
 

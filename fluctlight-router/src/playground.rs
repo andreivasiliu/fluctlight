@@ -91,9 +91,9 @@ pub(crate) fn send_request(state: &State) -> Result<(), Box<dyn Error>> {
         "!jhTIqlwlxKKoPPHIgH:synapse-dev.demi.ro", "@whyte:fluctlight-dev.demi.ro",
     );
 
-    let bytes = send_signed_request(uri, None, state)?;
+    let make_join_response_bytes = send_signed_request(uri, None, state)?;
 
-    let make_join_response: MakeJoinResponse = serde_json::from_slice(&*bytes)?;
+    let make_join_response: MakeJoinResponse = serde_json::from_slice(&*make_join_response_bytes)?;
 
     let mut join_template = make_join_response.event;
 
@@ -121,14 +121,14 @@ pub(crate) fn send_request(state: &State) -> Result<(), Box<dyn Error>> {
         "!jhTIqlwlxKKoPPHIgH:synapse-dev.demi.ro", event_id,
     );
 
-    let join_response_bytes = send_signed_request(uri, Some(raw_value), state)?;
+    let send_join_response_bytes = send_signed_request(uri, Some(raw_value), state)?;
 
     eprintln!(
         "Join response: {}",
-        String::from_utf8_lossy(&join_response_bytes)
+        String::from_utf8_lossy(&send_join_response_bytes)
     );
 
-    let send_join_response: SendJoinResponse = serde_json::from_slice(&join_response_bytes)?;
+    let send_join_response: SendJoinResponse = serde_json::from_slice(&send_join_response_bytes)?;
 
     eprintln!("Join event: {:?}", send_join_response.event.event_id);
     eprintln!("Auth events: {:?}", send_join_response.auth_chain.len());
@@ -137,6 +137,29 @@ pub(crate) fn send_request(state: &State) -> Result<(), Box<dyn Error>> {
     state.with_persistent_mut(move |persistent| {
         let send_join_response = send_join_response;
         let room = persistent
+            .rooms
+            .entry(send_join_response.event.room_id)
+            .or_default();
+        for event in send_join_response.state.iter().rev() {
+            room.pdu_blobs.push(event.to_string());
+        }
+    });
+
+    Ok(())
+}
+
+pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
+    let string = std::fs::read_to_string("matrix_hq.test.json").unwrap();
+
+    let send_join_response: SendJoinResponse = serde_json::from_str(&string)?;
+
+    eprintln!("Join event: {:?}", send_join_response.event.event_id);
+    eprintln!("Auth events: {:?}", send_join_response.auth_chain.len());
+    eprintln!("State events: {:?}", send_join_response.state.len());
+
+    state.with_ephemeral_mut(move |ephemeral| {
+        let send_join_response = send_join_response;
+        let room = ephemeral
             .rooms
             .entry(send_join_response.event.room_id)
             .or_default();

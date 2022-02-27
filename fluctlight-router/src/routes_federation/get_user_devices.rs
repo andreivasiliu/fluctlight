@@ -62,7 +62,7 @@ struct CrossSigningKey<'a> {
 }
 
 pub(super) fn get_federation_v1_user_devices<'r>(
-    request_data: &RequestData<'r>,
+    _request_data: &RequestData<'r>,
     request: Request<'r>,
 ) -> Response<'r> {
     Response {

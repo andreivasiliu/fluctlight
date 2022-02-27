@@ -1,9 +1,10 @@
+use askama::Template;
 /// GET /_matrix/federation/v1/version
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    playground::send_request,
     request::{EmptyBody, EmptyQS, GenericRequest, MatrixRequest, RequestData},
+    state::State,
 };
 
 type Request<'a> = GenericRequest<RequestPath<'a>, EmptyQS, EmptyBody>;
@@ -11,7 +12,7 @@ type Request<'a> = GenericRequest<RequestPath<'a>, EmptyQS, EmptyBody>;
 impl<'a> MatrixRequest for Request<'a> {
     type Response = Response<'a>;
 
-    const PATH_SPEC: &'static str = "/admin/send";
+    const PATH_SPEC: &'static str = "/admin/view";
 }
 
 #[derive(Serialize, Deserialize)]
@@ -20,23 +21,17 @@ pub(super) struct RequestPath<'a> {
     phantom: std::marker::PhantomData<&'a ()>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Template)]
+#[template(path = "view.html")]
 pub(super) struct Response<'a> {
-    text: &'a str,
+    state: &'a State,
 }
 
-pub(super) fn get_admin_send<'r>(
+pub(super) fn get_admin_view<'r>(
     request_data: &RequestData<'r>,
     _request: Request<'r>,
 ) -> Response<'r> {
-    let text = request_data.new_str("Hello");
-
-    match send_request(&request_data.state) {
-        Ok(value) => value,
-        Err(err) => {
-            eprintln!("Error: {}", err);
-        }
-    };
-
-    Response { text }
+    Response {
+        state: request_data.state,
+    }
 }

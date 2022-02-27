@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+    <title>Fluctlight Admin View</title>
+    <body>
+        <h1>Fluctlight</h1>
+        <p>Persistent store rooms: {{ state.persistent().rooms.len() }}.</p>
+
+        <p>Controls: <a href="/admin/load">load room</a></p>
+
+        <h3>Persistent rooms:</h3>
+        {% if state.persistent().rooms.is_empty() %}
+        <p>Nothing here.</p>
+        {% else %}
+        <ul>
+        {% let persistent = state.persistent() %}
+        {% for (room_name, room) in persistent.rooms %}
+            <li>Room {{ room_name }}: {{ room.pdu_blobs.len() }} PDUs</li>
+        {% endfor %}
+        {% endif %}
+        </ul>
+
+        <h3>Ephemeral rooms:</h3>
+        {% if state.ephemeral().rooms.is_empty() %}
+        <p>Nothing here.</p>
+        {% else %}
+        <ul>
+        {% let ephemeral = state.ephemeral() %}
+        {% for (room_name, room) in ephemeral.rooms %}
+            <li>Room {{ room_name }}: {{ room.pdu_blobs.len() }} PDUs</li>
+        {% endfor %}
+        {% endif %}
+        </ul>
+
+    </body>
+</html>

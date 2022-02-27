@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use ed25519_compact::{PublicKey, SecretKey, Signature};
+use ed25519_compact::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 

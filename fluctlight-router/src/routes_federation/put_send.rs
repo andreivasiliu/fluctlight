@@ -6,7 +6,7 @@ use serde_json::value::RawValue;
 
 use crate::{
     matrix_types::{Event, Id},
-    request::{EmptyBody, EmptyQS, GenericRequest, MatrixRequest, RequestData},
+    request::{EmptyQS, GenericRequest, MatrixRequest, RequestData},
     state::TimeStamp,
 };
 
@@ -47,7 +47,7 @@ struct PDUProcessingResult<'a> {
 }
 
 pub(super) fn put_federation_v1_send<'r>(
-    request_data: &RequestData<'r>,
+    _request_data: &RequestData<'r>,
     request: Request<'r>,
 ) -> Response<'r> {
     eprintln!("On transaction {}:", request.path.transaction_id);

@@ -27,6 +27,7 @@ pub struct ResponseResult {
 #[repr(C)]
 pub struct Response {
     status: u16,
+    content_type: RStr<'static>,
     body: RCow<'static, [u8]>,
 }
 
@@ -111,18 +112,23 @@ impl<'a> Request<'a> {
     }
 }
 
-impl From<(u16, Cow<'static, [u8]>)> for Response {
-    fn from((status, body): (u16, Cow<'static, [u8]>)) -> Self {
+impl From<(u16, &'static str, Cow<'static, [u8]>)> for Response {
+    fn from((status, content_type, body): (u16, &'static str, Cow<'static, [u8]>)) -> Self {
         Response {
             status,
+            content_type: content_type.into(),
             body: body.into(),
         }
     }
 }
 
-impl From<Response> for (u16, Cow<'static, [u8]>) {
+impl From<Response> for (u16, &'static str, Cow<'static, [u8]>) {
     fn from(response: Response) -> Self {
-        (response.status, response.body.into())
+        (
+            response.status,
+            response.content_type.into(),
+            response.body.into(),
+        )
     }
 }
 
@@ -138,8 +144,8 @@ impl From<Result<Response, String>> for ResponseResult {
 }
 
 impl Response {
-    pub fn new(status: u16, body: Cow<'static, [u8]>) -> Self {
-        (status, body).into()
+    pub fn new(status: u16, content_type: &'static str, body: Cow<'static, [u8]>) -> Self {
+        (status, content_type, body).into()
     }
 }
 
