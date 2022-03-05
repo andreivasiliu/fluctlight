@@ -23,3 +23,4 @@ reqwest = { version = "0.11", features = ["blocking"]}
 percent-encoding = "2.1"
 sha2 = "0.10"
 askama = "0.11"
+breezy-timer = { version = "1.0", features = ["breezy_timer"] }

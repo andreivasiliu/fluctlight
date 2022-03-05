@@ -32,7 +32,7 @@ impl MatrixId for ServerName {}
 impl MatrixId for Key {}
 
 impl<T> Id<T> {
-    fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.content
     }
 }
@@ -127,5 +127,17 @@ impl<'de, T: MatrixId> Deserialize<'de> for Box<Id<T>> {
 
         // FIXME: convert in place
         Id::try_boxed_from_str(&string).map_err(|err| serde::de::Error::custom(err))
+    }
+}
+
+impl Id<User> {
+    pub fn server_name(&self) -> &Id<ServerName> {
+        let parts = self
+            .as_str()
+            .split_once(':')
+            .expect("The name should already be validated");
+
+        Id::<ServerName>::try_from_str(parts.1)
+            .expect("The server part should already be validated")
     }
 }

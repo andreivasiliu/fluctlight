@@ -2,6 +2,7 @@ use std::panic::catch_unwind;
 
 use fluctlight_mod_interface::{ModuleState, OpaqueModuleState, Request, ResponseResult};
 
+mod canonical_hash;
 mod matrix_types;
 mod playground;
 mod rendered_json;

@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use ed25519_compact::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use smallvec::SmallVec;
 
 use crate::{
     matrix_types::{Event, Id, Key, ServerName},
@@ -67,14 +68,17 @@ impl ServerKeys {
     }
 }
 
+// Used to sign server keys, PDUs, and outgoing federation requests.
 pub(crate) trait Signable: Serialize {
     fn signatures_mut(&mut self) -> &mut Option<Signatures>;
+    fn signatures(&self) -> &Option<Signatures>;
 
     fn take_event_id(&mut self) -> Option<Box<Id<Event>>>;
     fn put_event_id(&mut self, event_id: Option<Box<Id<Event>>>);
 
     fn sign(&mut self, state: &State) {
         let mut signatures = self.signatures_mut().take().unwrap_or_default();
+        // FIXME: take unsigned
         let event_id = self.take_event_id();
         let mut server_signatures = BTreeMap::new();
 
@@ -100,15 +104,18 @@ pub(crate) trait Signable: Serialize {
         self.put_event_id(event_id);
     }
 
-    fn verify(&mut self, state: &State, server_name: &Id<ServerName>) -> bool {
-        let signatures = self.signatures_mut().take().unwrap_or_default();
+    fn verify(&self, state: &State, server_name: &Id<ServerName>) -> Result<(), &'static str> {
+        let signatures = match self.signatures() {
+            Some(signatures) => signatures,
+            None => return Err("The object has no signatures"),
+        };
 
         let bytes = serde_json::to_vec(self).expect("Serialization should always succeed");
 
-        eprintln!(
-            "Verifying signable: \n---\n{}\n---\n",
-            String::from_utf8_lossy(&bytes)
-        );
+        // eprintln!(
+        //     "Verifying signable: \n---\n{}\n---\n",
+        //     String::from_utf8_lossy(&bytes)
+        // );
 
         for (signing_server_name, server_signatures) in &signatures.signatures {
             if server_name == &**signing_server_name {
@@ -135,11 +142,11 @@ pub(crate) trait Signable: Serialize {
 
                     match verify_key.verify(&bytes, &signature) {
                         Ok(()) => {
-                            eprintln!("Key check for {} succeeded", key_name);
-                            *self.signatures_mut() = Some(signatures);
-                            return true;
+                            return Ok(());
                         }
                         Err(err) => {
+                            // TODO: Figure out if this is just a warning or if
+                            // the check needs to abort here
                             eprintln!("Key check for {} failed: {}", key_name, err);
                         }
                     }
@@ -147,9 +154,7 @@ pub(crate) trait Signable: Serialize {
             }
         }
 
-        *self.signatures_mut() = Some(signatures);
-
-        false
+        Err("No keys succeeded")
     }
 }
 
@@ -158,43 +163,87 @@ pub(crate) trait Hashable: Signable + Serialize {
     fn hashes_mut(&mut self) -> &mut Option<BTreeMap<String, String>>;
 
     fn hash(&mut self) {
+        let mut scratch_buffer = SmallVec::<[u8; 64]>::new();
+        scratch_buffer.resize(64, 0);
+
         let signatures = self.signatures_mut().take();
-        self.hashes_mut().take();
+        let mut hashes = self.hashes_mut().take().unwrap_or_default();
         self.event_id_mut().take();
 
-        let mut hashes = BTreeMap::new();
-
-        let bytes = serde_json::to_vec(&self).expect("Serialization should always succeed");
-
         let mut hasher = sha2::Sha256::new();
-        hasher.update(bytes);
+        serde_json::to_writer(&mut hasher, &self).expect("Serialization should always succeed");
         let sha256_hash = hasher.finalize();
 
-        let b64_sha256_hash =
-            base64::encode_config(sha256_hash.as_slice(), base64::STANDARD_NO_PAD);
+        let hash_size = base64::encode_config_slice(
+            sha256_hash.as_slice(),
+            base64::STANDARD_NO_PAD,
+            &mut scratch_buffer[..],
+        );
+        let b64_sha256_hash: &str =
+            std::str::from_utf8(&scratch_buffer[..hash_size]).expect("Base64 is always a string");
 
-        hashes.insert("sha256".to_string(), b64_sha256_hash);
+        if let Some(existing_hash) = hashes.get("sha256") {
+            if existing_hash != b64_sha256_hash {
+                // FIXME
+                // eprintln!("Hashes do not match: {}", b64_sha256_hash);
+            }
+        } else {
+            hashes.insert("sha256".to_string(), b64_sha256_hash.to_string());
+        }
 
         *self.hashes_mut() = Some(hashes);
 
-        let bytes = serde_json::to_vec(&self).expect("Serialization should always succeed");
-
-        eprintln!(
-            "Hashing hashable: \n---\n{}\n---\n",
-            String::from_utf8_lossy(&bytes)
-        );
-
         let mut hasher = sha2::Sha256::new();
-        hasher.update(bytes);
+        serde_json::to_writer(&mut hasher, &self).expect("Serialization should always succeed");
         let sha256_hash = hasher.finalize();
 
-        let event_id = format!(
-            "${}",
-            base64::encode_config(sha256_hash.as_slice(), base64::URL_SAFE_NO_PAD)
+        // eprintln!(
+        //     "Hashing hashable: \n---\n{}\n---\n",
+        //     String::from_utf8_lossy(&bytes)
+        // );
+
+        scratch_buffer[0] = b'$';
+        let hash_size = base64::encode_config_slice(
+            sha256_hash.as_slice(),
+            base64::URL_SAFE_NO_PAD,
+            &mut scratch_buffer[1..64],
         );
-        let event_id = Id::<Event>::try_boxed_from_str(&event_id).expect("Valid event ID");
+        let b64_sha256_hash: &str = std::str::from_utf8(&scratch_buffer[..hash_size + 1])
+            .expect("Base64 is always a string");
+
+        let event_id = Id::<Event>::try_boxed_from_str(b64_sha256_hash).expect("Valid event ID");
 
         *self.signatures_mut() = signatures;
         *self.event_id_mut() = Some(event_id);
+    }
+
+    fn generate_event_id(&mut self) {
+        self.event_id_mut().take();
+        let signatures = self.signatures_mut().take();
+
+        let mut hasher = sha2::Sha256::new();
+        serde_json::to_writer(&mut hasher, &self).expect("Serialization should always succeed");
+        let sha256_hash = hasher.finalize();
+
+        // eprintln!(
+        //     "Hashing hashable: \n---\n{}\n---\n",
+        //     String::from_utf8_lossy(&bytes)
+        // );
+
+        let mut scratch_buffer = SmallVec::<[u8; 64]>::new();
+        scratch_buffer.resize(64, 0);
+        scratch_buffer[0] = b'$';
+        let hash_size = base64::encode_config_slice(
+            sha256_hash.as_slice(),
+            base64::URL_SAFE_NO_PAD,
+            &mut scratch_buffer[1..64],
+        );
+        let b64_sha256_hash: &str = std::str::from_utf8(&scratch_buffer[..hash_size + 1])
+            .expect("Base64 is always a string");
+
+        let event_id = Id::<Event>::try_boxed_from_str(b64_sha256_hash).expect("Valid event ID");
+
+        *self.event_id_mut() = Some(event_id);
+        *self.signatures_mut() = signatures;
     }
 }

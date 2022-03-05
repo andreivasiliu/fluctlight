@@ -1,6 +1,18 @@
 <!DOCTYPE html>
+{% macro pdu_link(room_id, pdu_id) %}
+<a href="/admin/view/pdu/{{room_id}}/{{pdu_id}}">{{ pdu_id }}</a>
+{% endmacro %}
 <html>
-    <title>Fluctlight Admin View</title>
+    <head>
+        <title>Fluctlight Admin View</title>
+        <style>
+            html {
+                background-color: #121212;
+                color: white;
+            }
+        </style>
+    </head>
+    
     <body>
         <h1>Fluctlight</h1>
         <p>Persistent store rooms: {{ state.persistent().rooms.len() }}.</p>
@@ -26,7 +38,17 @@
         <ul>
         {% let ephemeral = state.ephemeral() %}
         {% for (room_name, room) in ephemeral.rooms %}
-            <li>Room {{ room_name }}: {{ room.pdu_blobs.len() }} PDUs</li>
+            <li>Room {{ room_name }}: {{ room.pdus.len() }} PDUs
+                <ul>
+                    {% for pdu_id in room.pdus_by_timestamp.values().take(6) %}
+                    <li>{% call pdu_link(room_name, pdu_id) %}</li>
+                    {% endfor %}
+                    <li>...</li>
+                    {% for pdu_id in room.pdus_by_timestamp.values().rev().take(6) %}
+                    <li>{% call pdu_link(room_name, pdu_id) %}</li>
+                    {% endfor %}
+                </ul>
+            </li>
         {% endfor %}
         {% endif %}
         </ul>

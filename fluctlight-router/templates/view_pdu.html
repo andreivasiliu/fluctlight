@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+{% macro pdu_link(ephemeral, room_id, pdu_id) %}
+{% let pdu = ephemeral.rooms[room_id].pdus.get(std::ops::Deref::deref(pdu_id)) %}
+{% if pdu.is_none() %}
+<a href="/admin/view/pdu/{{room_id}}/{{pdu_id}}">{{ pdu_id }}</a>: unknown
+{% else %}
+<a href="/admin/view/pdu/{{room_id}}/{{pdu_id}}">{{ pdu_id }}</a>: <em>{{ pdu.unwrap().pdu_type }}</em>
+{% endif %}
+{% endmacro %}
+<html>
+    <head>
+        <title>Fluctlight PDU</title>
+        <style>
+            html {
+                background-color: #121212;
+                color: white;
+            }
+        </style>
+    </head>
+
+    <body>
+        <h1>Fluctlight PDU</h1>
+
+        <p>Looking up:</p>
+        <ul>
+            <li>event: {{ event_id }}</li>
+            <li>room: {{ room_id }}</li>
+        </ul>
+
+        {% let ephemeral = state.ephemeral() %}
+        {% let pdu = ephemeral.rooms[room_id].pdus[event_id] %}
+
+        <p>
+            Stored ID:
+            {% if pdu.event_id.is_some() -%}
+                {% call pdu_link(ephemeral, room_id, pdu.event_id.as_ref().unwrap()) %}
+            {%- else -%}
+                n/a
+            {%- endif %}
+        </p>
+
+        <p>
+            Signature check:
+            {% if pdu.signature_check.is_some() %}
+                {% if pdu.signature_check.unwrap().is_ok() %}
+                    Okay
+                {% else %}
+                    {{ pdu.signature_check.unwrap().unwrap_err() }}
+                {% endif %}
+            {%- else -%}
+                n/a
+            {%- endif %}
+        </p>
+
+        <p>Authentication events:</p>
+        <ul>
+        {% for event in pdu.auth_events %}
+            <li>{% call pdu_link(ephemeral, room_id, event) %}</li>
+        {% endfor %}
+        </ul>
+
+        <p>Previous events:</p>
+        <ul>
+        {% for event in pdu.prev_events %}
+            <li>{% call pdu_link(ephemeral, room_id, event) %}</li>
+        {% endfor %}
+        </ul>
+
+        <p>PDU content:</p>
+        <pre>    {{ pdu.blob.as_deref().unwrap_or("") }}</pre>
+    </body>
+</html>

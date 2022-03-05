@@ -9,7 +9,8 @@ use ed25519_compact::KeyPair;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    matrix_types::{Id, Key, Room, ServerName},
+    matrix_types::{Event, Id, Key, Room, ServerName},
+    playground::{AnyContent, PDU},
     rendered_json::RenderedJson,
     server_keys::{ServerKeys, VerifyKey},
 };
@@ -32,7 +33,7 @@ pub(crate) struct Persistent {
 
 // TODO: Same as above, but even quicker, and even dirtier
 pub(crate) struct Ephemeral {
-    pub rooms: BTreeMap<Box<Id<Room>>, RoomState>,
+    pub rooms: BTreeMap<Box<Id<Room>>, EphemeralRoomState>,
 }
 
 // pub(crate) struct UserState {
@@ -44,6 +45,12 @@ pub(crate) struct Ephemeral {
 #[derive(Serialize, Deserialize, Default)]
 pub(crate) struct RoomState {
     pub pdu_blobs: Vec<String>,
+}
+
+#[derive(Default)]
+pub(crate) struct EphemeralRoomState {
+    pub pdus: BTreeMap<Box<Id<Event>>, PDU<AnyContent>>,
+    pub pdus_by_timestamp: BTreeMap<TimeStamp, Box<Id<Event>>>,
 }
 
 #[derive(Clone)]
@@ -60,7 +67,7 @@ pub(crate) struct ServerKeyPairBase64 {
     pub valid_until: TimeStamp,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(transparent)]
 pub(crate) struct TimeStamp(u128);
 
