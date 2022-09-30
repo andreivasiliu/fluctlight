@@ -1,7 +1,7 @@
 # Fluctlight
 
 Fluctlight is a playground for testing random ideas for speed improvements on a
-chat server with the [Matrix](matrix.org) protocol.
+chat server with the [Matrix](https://matrix.org) protocol.
 
 The goal is to implement a server with _extreme_ performance (i.e. the Nginx of
 Matrix servers), using as many tricks as I can possibly think of, including:
@@ -23,6 +23,16 @@ of Fluctlight, but is the goal of Conduit.
 
 [Conduit]: https://gitlab.com/famedly/conduit
 
+## Status
+
+The server is currently not usable for anything.
+
+Incoming APIs:
+* Prototype /key/server and /key/query
+
+Outgoing APIs:
+* Prototype /make_join and /send_join
+
 ## Features
 
 Currently implemented:
@@ -32,5 +42,11 @@ Currently implemented:
 * Deserialized requests and response structures use borrowed data wherever
   possible
 * Requests use canned (pre-rendered) JSON snippets as part of the response
+* Canonical JSON using a borrowing and sorting version of serde_json::Value
+* Hashes and signatures computed without storing canonical JSONs, by piping via
+  serde straight to a sha256 writer sink
+* An admin HTML page to show information using compiled [Askama] templates
 
 For planned features, see [DESIGN.md](./DESIGN.md).
+
+[Askama]: https://lib.rs/crates/askama

@@ -47,3 +47,68 @@ Memory shenanigans:
 * servo's interned arc string
 * SortedMap<&[u8]>: an already-sorted vec, used as a map
 * ouroboros: a PDU's RawValue plus deserialized PDU referencing it
+
+Logic core, IO shell:
+* Everything in the module must not be async
+* Connections are only allowed in the module loader
+* Module must be reloadable in the middle of a join request, successfully
+  * Module must not store intermediate temporary state
+  * Shell must not store deserialized data
+* Incoming connection:
+  * Client connects, shell asks module to process request
+  * Module says "nope, get keys first"
+  * Shell gets keys, shell asks module to process keys
+  * Shell asks module to process initial request again
+* Alternatively, special-case authentication
+  * This means only the request header is needed
+  * Can drop super-large requests immediately if auth fails
+* Outgoing join request
+  * Client asks to join, shell asks module to process request
+  * Module says "nope, get room directory first", shell retries
+  * Module says "nope, get make_join first", shell retries
+  * Module says "nope, get send_join_first"
+  * Shell connects, gets 160MB response, asks module to process
+  * Module says "processed, but get keys"
+  * Shell gets keys, asks module to process request
+
+Data structures:
+* State maps need two features:
+  * Ability to iterate over the state as it was at a specific point in time
+  * Ability to locate a key at a specific point in time
+* Iteration should be O(n), lookup should be O(log n) at most
+* Idea: List of cells with limited lifecycle
+  * Each cell's "next" pointer has two time/revision thresholds
+  * Before the first threshold, nothing is after it
+  * Before the second threshold, something is after it
+  * After the second threshold, something else is after it
+  * This can "skip" deleted nodes
+  * However, it doesn't work if the next node is repeatedly deleted
+  * Workaround is to recursively replace the cells before it
+* Idea: List of cells with full history for each cell
+  * The idea is that cells can never be deleted, only updated
+* Idea: State map is an array, state string interned ID is the index
+  * All state strings need to be interned, and they can never be deleted
+  * Therefore, they are stable array indexes
+  * The individual cells still need a history of modifications
+  * Iteration would be O(n), lookup would be mostly O(1)
+
+Flows:
+* Client asks to join over federation
+  * Incoming client request
+  * Outgoing directory
+    * Outgoing key query
+  * Outgoing make_join
+    * Outgoing key query
+  * Outgoing send_join
+    * Parse room state
+    * Outgoing key query
+    * Outgoing missing events?
+  * Incoming client response
+* Federated server sends incoming PDU
+  * Incoming federated request
+    * Outgoing key query
+  * Outgoing auth chain event retrieval (multiple)
+    * Outgoing key query (multiple)
+  * Outgoing state retrieval (multiple)
+    * Outgoing key query (multiple)
+  * Incoming federated response (could perhaps be done earlier)

@@ -20,7 +20,7 @@ fn main() -> Result<()> {
         .build()
         .unwrap();
 
-    eprintln!("Creating server...");
+    eprintln!("Creating server at http://localhost:3000/admin/view");
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
 
     let main_module = Arc::new(MainModule::new().unwrap());
