@@ -75,10 +75,12 @@ pub(super) fn post_key_v2_query<'r>(
         // multiple keys egardless of the Key IDs given."
         let _ = key_query;
 
-        if let Some(foreign_server_keys_json) =
+        if let Some(foreign_server_keys_json_list) =
             request_data.state.foreign_server_keys_json.get(server_name)
         {
-            server_keys.push(foreign_server_keys_json);
+            for foreign_server_keys_json in foreign_server_keys_json_list {
+                server_keys.push(foreign_server_keys_json);
+            }
         }
     }
 

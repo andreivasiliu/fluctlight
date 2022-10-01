@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ed25519_compact::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
@@ -104,11 +104,13 @@ pub(crate) trait Signable: Serialize {
         self.put_event_id(event_id);
     }
 
-    fn verify(&self, state: &State, server_name: &Id<ServerName>) -> Result<(), &'static str> {
-        let signatures = match self.signatures() {
+    fn verify(&mut self, state: &State, server_name: &Id<ServerName>, missing_keys: &mut BTreeSet<(Box<Id<ServerName>>, Box<Id<Key>>)>) -> Result<(), &'static str> {
+        // FIXME: This is horrible
+        let signatures = match self.signatures_mut().take() {
             Some(signatures) => signatures,
             None => return Err("The object has no signatures"),
         };
+        let event_id = self.take_event_id();
 
         let bytes = serde_json::to_vec(self).expect("Serialization should always succeed");
 
@@ -117,42 +119,56 @@ pub(crate) trait Signable: Serialize {
         //     String::from_utf8_lossy(&bytes)
         // );
 
-        for (signing_server_name, server_signatures) in &signatures.signatures {
-            if server_name == &**signing_server_name {
-                let server_public_keys = match state.foreign_server_keys.get(server_name) {
-                    Some(value) => value,
-                    None => continue,
-                };
+        let server_signatures = match signatures.signatures.get(server_name) {
+            Some(value) => value,
+            None => {
+                *self.signatures_mut() = Some(signatures);
+                self.put_event_id(event_id);
+                return Err("Not signed by the expected server");
+            }
+        };
 
-                for (key_name, signature) in server_signatures {
-                    let public_key = match server_public_keys.verify_keys.get(key_name) {
-                        Some(value) => value,
-                        None => continue,
-                    };
-                    let public_key_bytes =
-                        base64::decode_config(&public_key.key, base64::STANDARD_NO_PAD)
-                            .expect("Key already validated");
-                    let verify_key =
-                        PublicKey::from_slice(&public_key_bytes).expect("Key already validated");
+        for (key_name, signature) in server_signatures {
+            let public_key = match state.get_server_key(server_name, key_name) {
+                Some(value) => value,
+                None => {
+                    missing_keys.insert((server_name.to_owned(), key_name.to_owned()));
+                    continue;
+                }
+            };
 
-                    let signature_bytes = base64::decode_config(signature, base64::STANDARD_NO_PAD)
-                        .expect("Signature already validated");
-                    let signature = Signature::from_slice(&signature_bytes)
-                        .expect("Signature already validated");
+            // TODO: Should be stored as already decoded somewhere
+            let public_key_bytes =
+                base64::decode_config(public_key, base64::STANDARD_NO_PAD)
+                    .expect("Key already validated");
+            let verify_key =
+                PublicKey::from_slice(&public_key_bytes).expect("Key already validated");
 
-                    match verify_key.verify(&bytes, &signature) {
-                        Ok(()) => {
-                            return Ok(());
-                        }
-                        Err(err) => {
-                            // TODO: Figure out if this is just a warning or if
-                            // the check needs to abort here
-                            eprintln!("Key check for {} failed: {}", key_name, err);
-                        }
-                    }
+            let signature_bytes = base64::decode_config(signature, base64::STANDARD_NO_PAD)
+                .expect("Signature already validated");
+            let signature = Signature::from_slice(&signature_bytes)
+                .expect("Signature already validated");
+
+            match verify_key.verify(&bytes, &signature) {
+                Ok(()) => {
+                    *self.signatures_mut() = Some(signatures);
+                    self.put_event_id(event_id);
+                    return Ok(());
+                }
+                Err(err) => {
+                    // TODO: Figure out if this is just a warning or if
+                    // the check needs to abort here
+                    eprintln!(
+                        "Verifying signable: \n---\n{}\n---\n",
+                        String::from_utf8_lossy(&bytes)
+                    );
+                    eprintln!("Key check on {:?} for {} failed: {}", event_id, key_name, err);
                 }
             }
         }
+
+        *self.signatures_mut() = Some(signatures);
+        self.put_event_id(event_id);
 
         Err("No keys succeeded")
     }

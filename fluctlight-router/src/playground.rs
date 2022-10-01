@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, error::Error};
+use std::{collections::{BTreeMap, BTreeSet}, error::Error};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, value::RawValue};
@@ -107,7 +107,9 @@ pub(crate) fn send_request(state: &State) -> Result<(), Box<dyn Error>> {
     join_template.hash();
     join_template.sign(state);
 
-    join_template.verify(state, &state.server_name).unwrap();
+    let mut missing_keys = BTreeSet::new();
+
+    join_template.verify(state, &state.server_name, &mut missing_keys).unwrap();
 
     // The spec requires this to be missing when transferred over federation
     let event_id = join_template.event_id.take().unwrap();
@@ -271,12 +273,34 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
 
         eprintln!("PDUs hashed.");
 
+        let mut missing_keys = BTreeSet::new();
+
         timer.start("check event signatures");
+        let mut correct = 0;
+        let mut incorrect = 0;
         for pdu in room.pdus.values_mut() {
-            let result = pdu.verify(state, pdu.sender.server_name());
+            // FIXME: No clone
+            let sender_name = pdu.sender.server_name().to_owned();
+            let result = pdu.verify(state, &sender_name, &mut missing_keys);
             pdu.signature_check = Some(result);
+            if result.is_ok() {
+                correct += 1;
+            } else {
+                incorrect += 1;
+            }
+            // if let Err(_err) = result {
+            //     eprintln!("Signature check failed: {}, pdu: {:?}", err, pdu.event_id);
+            //     break;
+            // }
         }
         timer.stop("check event signatures");
+
+        eprintln!("Correct: {}, incorrect: {}", correct, incorrect);
+        eprintln!("Missing keys: {}", missing_keys.len());
+
+        let missing_key_servers: BTreeSet<_> = missing_keys.into_iter().map(|(server, _key_name)| server).collect();
+
+        eprintln!("Missing key servers: {}", missing_key_servers.len());
 
         eprintln!("PDUs verified.");
 

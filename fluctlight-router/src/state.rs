@@ -19,8 +19,8 @@ pub(crate) struct State {
     // pub users: BTreeMap<Box<Id<User>>, UserState>,
     pub server_key_pairs: BTreeMap<Box<Id<Key>>, ServerKeyPair>,
     pub server_name: Box<Id<ServerName>>,
-    pub foreign_server_keys: BTreeMap<Box<Id<ServerName>>, ServerKeys>,
-    pub foreign_server_keys_json: BTreeMap<Box<Id<ServerName>>, RenderedJson<'static, ServerKeys>>,
+    pub foreign_server_keys: BTreeMap<Box<Id<ServerName>>, Vec<ServerKeys>>,
+    pub foreign_server_keys_json: BTreeMap<Box<Id<ServerName>>, Vec<RenderedJson<'static, ServerKeys>>>,
     persistent: RwLock<Persistent>,
     ephemeral: RwLock<Ephemeral>,
 }
@@ -132,8 +132,10 @@ impl State {
         let mut foreign_server_keys = BTreeMap::new();
         let rendered_json =
             RenderedJson::from_trusted(serde_json::to_string(&server_keys).expect("Valid JSON"));
-        foreign_server_keys_json.insert(server_name.clone(), rendered_json);
-        foreign_server_keys.insert(server_name, server_keys);
+        foreign_server_keys_json.insert(server_name.clone(), vec![rendered_json]);
+        foreign_server_keys.insert(server_name, vec![server_keys]);
+
+        foreign_server_keys.extend(load_foreign_keys());
 
         let persistent = Persistent::load();
         let ephemeral = Ephemeral {
@@ -195,6 +197,26 @@ impl State {
 
         // Mimic the persistent interface to catch lifetime issues early
         f(&mut *ephemeral)
+    }
+
+    pub fn get_server_key(&self, server_name: &Id<ServerName>, key_name: &Id<Key>) -> Option<&str> {
+        let server_keys = self.foreign_server_keys.get(server_name)?;
+
+        // FIXME: Should be optimized to a map
+        for server_key in server_keys {
+            if let Some(key) = server_key.verify_keys.get(key_name) {
+                return Some(&key.key);
+            }
+
+            if let Some(old_verify_keys) = &server_key.old_verify_keys {
+                // FIXME: Timestamp should not be ignored
+                if let Some(key) = old_verify_keys.get(key_name) {
+                    return Some(&key.key);
+                }
+            }
+        }
+
+        None
     }
 }
 
@@ -319,3 +341,14 @@ fn generate_server_key_pairs() -> BTreeMap<Box<Id<Key>>, ServerKeyPair> {
 
     server_key_pairs
 }
+
+fn load_foreign_keys() -> BTreeMap<Box<Id<ServerName>>, Vec<ServerKeys>> {
+    if !std::path::Path::new("foreign_keys.json").exists() {
+        return BTreeMap::new();
+    }
+
+    // FIXME: fix unwraps
+    let key_file = std::fs::File::open("foreign_keys.json").unwrap();
+    serde_json::from_reader(key_file).unwrap()
+}
+

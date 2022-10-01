@@ -47,6 +47,8 @@ Memory shenanigans:
 * servo's interned arc string
 * SortedMap<&[u8]>: an already-sorted vec, used as a map
 * ouroboros: a PDU's RawValue plus deserialized PDU referencing it
+* append-only-vec: can append with shared reference
+* IntStr/ArcStr combo: best of both worlds
 
 Logic core, IO shell:
 * Everything in the module must not be async
@@ -112,3 +114,21 @@ Flows:
   * Outgoing state retrieval (multiple)
     * Outgoing key query (multiple)
   * Incoming federated response (could perhaps be done earlier)
+
+Trusting federation:
+* Federated room state cannot be fully validated
+* Maintain a trust-depth
+  * Everything with bigger depth is validated
+  * Everything with smaller depth is queried and blindly trusted
+* Backfill can assign unknown state IDs at branches
+  * This should detect many same-state merges of non-state messages
+
+PDU storage:
+* Need to choose between:
+  * Super-compact: store interned strings
+  * Super-compatible: store exact JSON replica
+* Likely a choice that can be 
+* JSON replica store:
+  * JSON stream of individual PDUs
+  * Separate index with pointers to file and start/end offsets
+  * Separate map with event_id to index

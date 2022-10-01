@@ -44,7 +44,7 @@
                     <li>{% call pdu_link(room_name, pdu_id) %}</li>
                     {% endfor %}
                     <li>...</li>
-                    {% for pdu_id in room.pdus_by_timestamp.values().rev().take(6) %}
+                    {% for pdu_id in room.pdus_by_timestamp.values().rev().take(18) %}
                     <li>{% call pdu_link(room_name, pdu_id) %}</li>
                     {% endfor %}
                 </ul>
