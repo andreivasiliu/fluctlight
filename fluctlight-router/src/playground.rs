@@ -1,11 +1,13 @@
-use std::{collections::{BTreeMap, BTreeSet}, error::Error};
+use std::{collections::BTreeMap, error::Error, io::Write};
 
+use rayon::prelude::ParallelIterator;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, value::RawValue};
 
 use crate::{
     canonical_hash::verify_content_hash,
     matrix_types::{Event, Id, Room, ServerName, User},
+    persistence::{PDUBlob, RoomPersistence},
     server_keys::{Hashable, Signable, Signatures},
     state::{State, TimeStamp},
 };
@@ -50,6 +52,9 @@ fn send_signed_request(
         server_signatures.insert(key_name.clone(), sig_b64);
     }
 
+    Ok(Vec::new())
+
+    /*
     let client = reqwest::blocking::Client::new();
 
     let url = format!("https://synapse-dev.demi.ro{}", uri);
@@ -80,6 +85,7 @@ fn send_signed_request(
     eprintln!("Response bytes: {}", String::from_utf8_lossy(&*bytes));
 
     Ok(bytes.to_vec())
+    */
 }
 
 pub(crate) fn send_request(state: &State) -> Result<(), Box<dyn Error>> {
@@ -106,13 +112,12 @@ pub(crate) fn send_request(state: &State) -> Result<(), Box<dyn Error>> {
 
     join_template.hash();
     join_template.sign(state);
+    let event_id = join_template.generate_event_id();
 
-    let mut missing_keys = BTreeSet::new();
-
-    join_template.verify(state, &state.server_name, &mut missing_keys).unwrap();
+    join_template.verify(state, &state.server_name).unwrap();
 
     // The spec requires this to be missing when transferred over federation
-    let event_id = join_template.event_id.take().unwrap();
+    // let event_id = join_template.event_id.take().unwrap();
 
     let bytes = serde_json::to_vec(&join_template)?;
 
@@ -134,7 +139,6 @@ pub(crate) fn send_request(state: &State) -> Result<(), Box<dyn Error>> {
 
     let send_join_response: SendJoinResponse = serde_json::from_slice(&send_join_response_bytes)?;
 
-    eprintln!("Join event: {:?}", send_join_response.event.event_id);
     eprintln!("Auth events: {:?}", send_join_response.auth_chain.len());
     eprintln!("State events: {:?}", send_join_response.state.len());
 
@@ -152,7 +156,7 @@ pub(crate) fn send_request(state: &State) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
+pub(crate) fn load_join_event() -> Result<(), Box<dyn Error>> {
     use breezy_timer::{BreezyTimer, Timer};
     let mut timer = BreezyTimer::new();
 
@@ -166,152 +170,226 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
     let send_join_response: SendJoinResponse = serde_json::from_str(&string)?;
     timer.stop("parse JSON");
 
-    eprintln!("Join event: {:?}", send_join_response.event.event_id);
     eprintln!("Auth events: {:?}", send_join_response.auth_chain.len());
     eprintln!("State events: {:?}", send_join_response.state.len());
 
-    state.with_ephemeral_mut(|ephemeral| {
-        let send_join_response = send_join_response;
-        let room = ephemeral
-            .rooms
-            .entry(send_join_response.event.room_id)
-            .or_default();
+    eprintln!("Parsing events...");
+    timer.start("parse events");
 
-        room.pdus.clear();
+    let mut pdus =
+        Vec::with_capacity(send_join_response.state.len() + send_join_response.auth_chain.len());
 
-        timer.start("hash events");
-        let mut correct = 0;
-        let mut incorrect = 0;
-        // let mut example = None;
-        for pdu in send_join_response.state.iter() {
-            if let Err(err) = verify_content_hash(pdu.get(), false) {
-                eprintln!("Hash incorrect: {}", err);
-                // example = Some(pdu);
-                incorrect += 1;
-            } else {
-                correct += 1;
-            }
+    for &event in send_join_response
+        .state
+        .iter()
+        .chain(send_join_response.auth_chain.iter())
+    {
+        let parsed_pdu = ParsedPDU {
+            event_id: None,
+            pdu: parse_pdu(event)?,
+            blob: event.to_owned(),
+            signature_check: None,
+            hash_check: None,
+        };
+
+        pdus.push(parsed_pdu);
+    }
+    timer.stop("parse events");
+
+    eprintln!("Generating event IDs...");
+    timer.start("generate event IDs");
+    for parsed_pdu in &mut pdus {
+        parsed_pdu.event_id = Some(parsed_pdu.pdu.generate_event_id());
+    }
+    timer.stop("generate event IDs");
+
+    eprintln!("Persisting events on disk...");
+    timer.start("persist events");
+    std::fs::remove_file("db.room.matrix_hq/state_pdus.json.gz").unwrap();
+    let room_path = "db.room.matrix_hq";
+    let mut room_persistence =
+        RoomPersistence::new(room_path).expect("Could not open room persistence");
+
+    for parsed_pdu in &pdus {
+        let pdu_blob = PDUBlob {
+            event_id: parsed_pdu.event_id.as_ref().unwrap(),
+            pdu_blob: &parsed_pdu.blob,
+        };
+
+        serde_json::to_writer(room_persistence.state_pdu_file(), &pdu_blob)
+            .expect("Could not write to persistent room storage");
+    }
+    room_persistence
+        .state_pdu_file()
+        .flush()
+        .expect("Could not flush room persistence store");
+    drop(room_persistence);
+    timer.stop("persist events");
+
+    eprintln!("Times:");
+    for (name, time) in timer {
+        println!("{} {:.2}s", name, time.get_total_elapsed().as_secs_f32());
+    }
+
+    Ok(())
+}
+
+pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
+    use breezy_timer::{BreezyTimer, Timer};
+    let mut timer = BreezyTimer::new();
+
+    timer.start("total");
+
+    eprintln!("Reloading events from disk...");
+    timer.start("reloading events");
+    let mut room_persistence = RoomPersistence::new("db.room.matrix_hq").unwrap();
+
+    let pdu_bytes = room_persistence.read_state_pdu_file()?;
+    let json_stream = serde_json::Deserializer::from_slice(&pdu_bytes);
+    timer.stop("reloading events");
+
+    eprintln!("Reparsing events from disk...");
+    timer.start("reparsing events");
+    let mut pdus = Vec::new();
+
+    for pdu_blob in json_stream.into_iter::<PDUBlob>() {
+        let pdu_blob = pdu_blob.unwrap();
+        let parsed_pdu = parse_pdu(&pdu_blob.pdu_blob).unwrap();
+
+        pdus.push(ParsedPDU {
+            event_id: Some(pdu_blob.event_id.to_owned()),
+            pdu: parsed_pdu,
+            blob: pdu_blob.pdu_blob.to_owned(),
+            signature_check: None,
+            hash_check: None,
+        })
+    }
+    timer.stop("reparsing events");
+
+    eprintln!("Checking event hashes...");
+    timer.start("hash events");
+    let mut correct = 0;
+    let mut incorrect = 0;
+    // let mut example = None;
+    for parsed_pdu in &mut pdus {
+        let json_blob = parsed_pdu.blob.get();
+        let result = verify_content_hash(json_blob, false);
+        if result.is_err() {
+            incorrect += 1;
+        } else {
+            correct += 1;
         }
-        eprintln!("Correct: {}, incorrect: {}", correct, incorrect);
-        // if let Some(example) = example {
-        //     eprintln!("Example: {}", example.get());
-        //     eprintln!("Example canonical:");
-        //     verify_content_hash(example.get(), true).ok();
-        //     eprintln!();
-        // }
-        timer.stop("hash events");
+        parsed_pdu.hash_check = Some(result);
+    }
+    eprintln!("Correct: {}, incorrect: {}", correct, incorrect);
+    // if let Some(example) = example {
+    //     eprintln!("Example: {}", example.get());
+    //     eprintln!("Example canonical:");
+    //     verify_content_hash(example.get(), true).ok();
+    //     eprintln!();
+    // }
+    timer.stop("hash events");
 
-        timer.start("parse events");
+    eprintln!("Checking event signatures...");
+    // let mut missing_keys = BTreeSet::new();
 
-        let mut pdus = Vec::with_capacity(
-            send_join_response.state.len() + send_join_response.auth_chain.len(),
-        );
-
-        for event in send_join_response
-            .state
-            .iter()
-            .chain(send_join_response.auth_chain.iter())
-        {
-            let pdu: PDUTypeOnly = serde_json::from_str(event.get())?;
-
-            let mut pdu = match &*pdu.pdu_type {
-                "m.room.member" => {
-                    let pdu: PDU<MemberContent> = serde_json::from_str(event.get())?;
-                    pdu.upcast()
-                }
-                "m.room.create" => {
-                    let pdu: PDU<CreateContent> = serde_json::from_str(event.get())?;
-                    pdu.upcast()
-                }
-                "m.room.history_visibility" => {
-                    let pdu: PDU<HistoryVisibilityContent> = serde_json::from_str(event.get())?;
-                    pdu.upcast()
-                }
-                "m.room.join_rules" => {
-                    let pdu: PDU<JoinRulesContent> = serde_json::from_str(event.get())?;
-                    pdu.upcast()
-                }
-                "m.room.power_levels" => {
-                    let pdu: PDU<PowerLevelsContent> = serde_json::from_str(event.get())?;
-                    pdu.upcast()
-                }
-                _ => {
-                    let pdu: PDU<EmptyContent> = serde_json::from_str(event.get())?;
-                    pdu.upcast()
-                }
-            };
-
-            pdu.blob = Some(event.to_string());
-            pdus.push(pdu);
-        }
-        timer.stop("parse events");
-
-        timer.start("generate event IDs");
-        for pdu in &mut pdus {
-            pdu.generate_event_id();
-        }
-        timer.stop("generate event IDs");
-
-        timer.start("store events");
-        for pdu in pdus {
-            let event_id = pdu.event_id.as_ref().expect("Just created").clone();
-
-            room.pdus_by_timestamp
-                .insert(pdu.origin_server_ts, event_id.clone());
-            room.pdus.insert(event_id, pdu);
-        }
-
-        timer.stop("store events");
-
-        eprintln!("PDUs loaded.");
-
-        timer.start("reference events");
-        for pdu in room.pdus.values_mut() {
-            pdu.generate_event_id();
-        }
-        timer.stop("reference events");
-
-        eprintln!("PDUs hashed.");
-
-        let mut missing_keys = BTreeSet::new();
-
-        timer.start("check event signatures");
-        let mut correct = 0;
-        let mut incorrect = 0;
-        for pdu in room.pdus.values_mut() {
+    timer.start("check event signatures");
+    use rayon::prelude::ParallelSliceMut;
+    pdus.par_chunks_mut(128).for_each(|pdus| {
+        for parsed_pdu in pdus {
             // FIXME: No clone
-            let sender_name = pdu.sender.server_name().to_owned();
-            let result = pdu.verify(state, &sender_name, &mut missing_keys);
-            pdu.signature_check = Some(result);
-            if result.is_ok() {
-                correct += 1;
-            } else {
-                incorrect += 1;
-            }
-            // if let Err(_err) = result {
-            //     eprintln!("Signature check failed: {}, pdu: {:?}", err, pdu.event_id);
-            //     break;
-            // }
+            let sender_name = parsed_pdu.pdu.sender.server_name().to_owned();
+            let result = parsed_pdu.pdu.verify(state, &sender_name);
+            parsed_pdu.signature_check = Some(result);
         }
-        timer.stop("check event signatures");
+    });
+    timer.stop("check event signatures");
 
-        eprintln!("Correct: {}, incorrect: {}", correct, incorrect);
-        eprintln!("Missing keys: {}", missing_keys.len());
+    eprintln!("Mapping events in memory...");
+    timer.start("store events");
 
-        let missing_key_servers: BTreeSet<_> = missing_keys.into_iter().map(|(server, _key_name)| server).collect();
+    let room_id = pdus[0].pdu.room_id.clone();
+    let mut room_pdus: BTreeMap<Box<Id<Event>>, ParsedPDU> = BTreeMap::new();
+    let mut room_pdus_by_timestamp: BTreeMap<TimeStamp, Box<Id<Event>>> = BTreeMap::new();
 
-        eprintln!("Missing key servers: {}", missing_key_servers.len());
+    for parsed_pdu in pdus {
+        let event_id = parsed_pdu.event_id.as_ref().expect("Just created").clone();
 
-        eprintln!("PDUs verified.");
+        room_pdus_by_timestamp.insert(parsed_pdu.pdu.origin_server_ts, event_id.clone());
+        room_pdus.insert(event_id, parsed_pdu);
+    }
 
-        Result::<_, Box<dyn Error>>::Ok(())
-    })?;
+    state.with_ephemeral_mut(|ephemeral| {
+        let room = ephemeral.rooms.entry(room_id).or_default();
+
+        room.pdus = room_pdus;
+        room.pdus_by_timestamp = room_pdus_by_timestamp;
+    });
+
+    timer.stop("store events");
+
+    eprintln!("All done.");
 
     timer.stop("total");
 
-    println!("{:#?}", timer);
+    eprintln!("Times:");
+    for (name, time) in timer {
+        println!("{} {:.2}s", name, time.get_total_elapsed().as_secs_f32());
+    }
 
     Ok(())
+}
+
+fn parse_pdu(event: &RawValue) -> Result<PDU<AnyContent>, std::io::Error> {
+    let pdu: PDUTypeOnly = serde_json::from_str(event.get())?;
+
+    let pdu = match &*pdu.pdu_type {
+        "m.room.member" => {
+            let pdu: PDU<MemberContent> = serde_json::from_str(event.get())?;
+            pdu.upcast()
+        }
+        "m.room.create" => {
+            let pdu: PDU<CreateContent> = serde_json::from_str(event.get())?;
+            pdu.upcast()
+        }
+        "m.room.history_visibility" => {
+            let pdu: PDU<HistoryVisibilityContent> = serde_json::from_str(event.get())?;
+            pdu.upcast()
+        }
+        "m.room.join_rules" => {
+            let pdu: PDU<JoinRulesContent> = serde_json::from_str(event.get())?;
+            pdu.upcast()
+        }
+        "m.room.power_levels" => {
+            let pdu: PDU<PowerLevelsContent> = serde_json::from_str(event.get())?;
+            pdu.upcast()
+        }
+        // FIXME: only on versions 5 and below
+        "m.room.aliases" => {
+            let pdu: PDU<RoomAliasesContent> = serde_json::from_str(event.get())?;
+            pdu.upcast()
+        }
+        _ => {
+            let pdu: PDU<EmptyContent> = serde_json::from_str(event.get())?;
+            pdu.upcast()
+        }
+    };
+
+    Ok(pdu)
+}
+
+pub(crate) struct ParsedPDU {
+    pub event_id: Option<Box<Id<Event>>>,
+    pub pdu: PDU<AnyContent>,
+    pub blob: Box<RawValue>,
+    pub signature_check: Option<Result<(), &'static str>>,
+    pub hash_check: Option<Result<(), String>>,
+}
+
+impl ParsedPDU {
+    pub(crate) fn blob(&self) -> String {
+        self.blob.to_string()
+    }
 }
 
 #[derive(Deserialize)]
@@ -340,8 +418,6 @@ pub(crate) struct PDU<Content: PDUContentType> {
     content: Content,
     depth: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) event_id: Option<Box<Id<Event>>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     hashes: Option<BTreeMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     origin: Option<Box<Id<ServerName>>>,
@@ -357,10 +433,6 @@ pub(crate) struct PDU<Content: PDUContentType> {
     #[serde(rename = "type")]
     pub(crate) pdu_type: String,
     // TODO: missing 'membership'
-    #[serde(skip)]
-    pub(crate) blob: Option<String>,
-    #[serde(skip)]
-    pub(crate) signature_check: Option<Result<(), &'static str>>,
 }
 
 impl<C> Signable for PDU<C>
@@ -375,14 +447,6 @@ where
     fn signatures(&self) -> &Option<Signatures> {
         &self.signatures
     }
-
-    fn take_event_id(&mut self) -> Option<Box<Id<Event>>> {
-        self.event_id.take()
-    }
-
-    fn put_event_id(&mut self, event_id: Option<Box<Id<Event>>>) {
-        self.event_id = event_id;
-    }
 }
 
 impl<C> Hashable for PDU<C>
@@ -390,10 +454,6 @@ where
     C: PDUContentType + Serialize,
     C::StateKey: Serialize,
 {
-    fn event_id_mut(&mut self) -> &mut Option<Box<Id<Event>>> {
-        &mut self.event_id
-    }
-
     fn hashes_mut(&mut self) -> &mut Option<BTreeMap<String, String>> {
         &mut self.hashes
     }
@@ -405,7 +465,6 @@ impl<C: PDUContentType> PDU<C> {
             auth_events: self.auth_events,
             content: self.content.upcast(),
             depth: self.depth,
-            event_id: self.event_id,
             hashes: self.hashes,
             origin: self.origin,
             origin_server_ts: self.origin_server_ts,
@@ -416,8 +475,6 @@ impl<C: PDUContentType> PDU<C> {
             signatures: self.signatures,
             state_key: C::upcast_state(self.state_key),
             pdu_type: self.pdu_type,
-            blob: self.blob,
-            signature_check: None,
         }
     }
 }
@@ -435,6 +492,18 @@ pub(crate) struct CreateContent {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct JoinRulesContent {
     join_rule: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct RoomAliasesContent {
+    aliases: RoomAliasesList,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub(crate) enum RoomAliasesList {
+    Single(String),
+    Multiple(Vec<String>),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -554,6 +623,18 @@ impl PDUContentType for HistoryVisibilityContent {
     }
 }
 
+impl PDUContentType for RoomAliasesContent {
+    type StateKey = Box<Id<ServerName>>;
+
+    fn upcast(self) -> AnyContent {
+        AnyContent::RoomAliases(self)
+    }
+
+    fn upcast_state(state_key: Self::StateKey) -> AnyState {
+        AnyState::ServerName(state_key)
+    }
+}
+
 impl PDUContentType for EmptyContent {
     type StateKey = String;
 
@@ -572,11 +653,13 @@ pub(crate) enum AnyContent {
     JoinRules(JoinRulesContent),
     PowerLevels(PowerLevelsContent),
     HistoryVisibility(HistoryVisibilityContent),
+    RoomAliases(RoomAliasesContent),
     Other(EmptyContent),
 }
 
 pub(crate) enum AnyState {
     UserId(Box<Id<User>>),
+    ServerName(Box<Id<ServerName>>),
     Empty(EmptyStateKey),
     Other(String),
 }
@@ -604,6 +687,7 @@ impl Serialize for AnyContent {
             AnyContent::JoinRules(c) => c.serialize(serializer),
             AnyContent::PowerLevels(c) => c.serialize(serializer),
             AnyContent::HistoryVisibility(c) => c.serialize(serializer),
+            AnyContent::RoomAliases(c) => c.serialize(serializer),
             AnyContent::Other(c) => c.serialize(serializer),
         }
     }
@@ -616,6 +700,7 @@ impl Serialize for AnyState {
     {
         match self {
             AnyState::UserId(s) => s.serialize(serializer),
+            AnyState::ServerName(s) => s.serialize(serializer),
             AnyState::Empty(s) => s.serialize(serializer),
             AnyState::Other(s) => s.serialize(serializer),
         }

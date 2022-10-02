@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    playground::load_room,
+    playground::{load_join_event, load_room},
     request::{EmptyBody, EmptyQS, GenericRequest, MatrixRequest, RequestData},
 };
 
@@ -30,6 +30,11 @@ pub(super) fn get_admin_load<'r>(
     _request: Request<'r>,
 ) -> Response<'r> {
     let text = request_data.new_str("Hello");
+
+    if false {
+        // Turn a join event into a gzip PDU store
+        load_join_event().unwrap();
+    }
 
     match load_room(&request_data.state) {
         Ok(value) => value,

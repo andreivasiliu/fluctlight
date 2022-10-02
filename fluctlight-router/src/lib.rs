@@ -1,9 +1,11 @@
 use std::panic::catch_unwind;
 
 use fluctlight_mod_interface::{ModuleState, OpaqueModuleState, Request, ResponseResult};
+use playground::load_room;
 
 mod canonical_hash;
 mod matrix_types;
+mod persistence;
 mod playground;
 mod rendered_json;
 mod request;
@@ -34,6 +36,8 @@ pub extern "C" fn process_request<'a>(request: Request<'a>) -> ResponseResult {
 #[no_mangle]
 pub extern "C" fn create_state() -> OpaqueModuleState {
     let state = Box::new(state::State::new());
+
+    load_room(&state).expect("Could not load state.");
 
     let module_state = ModuleState { state };
 

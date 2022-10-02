@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 {% macro pdu_link(ephemeral, room_id, pdu_id) %}
-{% let pdu = ephemeral.rooms[room_id].pdus.get(std::ops::Deref::deref(pdu_id)) %}
-{% if pdu.is_none() %}
+{% let parsed_pdu = ephemeral.rooms[room_id].pdus.get(std::ops::Deref::deref(pdu_id)) %}
+{% if parsed_pdu.is_none() %}
 <a href="/admin/view/pdu/{{room_id}}/{{pdu_id}}">{{ pdu_id }}</a>: unknown
 {% else %}
-<a href="/admin/view/pdu/{{room_id}}/{{pdu_id}}">{{ pdu_id }}</a>: <em>{{ pdu.unwrap().pdu_type }}</em>
+<a href="/admin/view/pdu/{{room_id}}/{{pdu_id}}">{{ pdu_id }}</a>: <em>{{ parsed_pdu.unwrap().pdu.pdu_type }}</em>
 {% endif %}
 {% endmacro %}
 <html>
@@ -52,21 +52,34 @@
             {%- endif %}
         </p>
 
+        <p>
+            Hash check:
+            {% if pdu.hash_check.is_some() %}
+                {% if pdu.hash_check.as_ref().unwrap().is_ok() %}
+                    Okay
+                {% else %}
+                    {{ pdu.hash_check.as_ref().unwrap().as_ref().unwrap_err() }}
+                {% endif %}
+            {%- else -%}
+                n/a
+            {%- endif %}
+        </p>
+
         <p>Authentication events:</p>
         <ul>
-        {% for event in pdu.auth_events %}
+        {% for event in pdu.pdu.auth_events %}
             <li>{% call pdu_link(ephemeral, room_id, event) %}</li>
         {% endfor %}
         </ul>
 
         <p>Previous events:</p>
         <ul>
-        {% for event in pdu.prev_events %}
+        {% for event in pdu.pdu.prev_events %}
             <li>{% call pdu_link(ephemeral, room_id, event) %}</li>
         {% endfor %}
         </ul>
 
         <p>PDU content:</p>
-        <pre>    {{ pdu.blob.as_deref().unwrap_or("") }}</pre>
+        <pre>    {{ pdu.blob() }}</pre>
     </body>
 </html>

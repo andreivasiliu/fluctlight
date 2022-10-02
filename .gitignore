@@ -1,6 +1,6 @@
 /target
 Cargo.lock
-server_keys.json
-persistent.json
-*.test.json
-*.test.txt
+*.txt
+*.json
+*.json.gz
+/db.*

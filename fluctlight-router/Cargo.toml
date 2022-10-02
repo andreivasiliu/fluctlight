@@ -19,8 +19,11 @@ serde_json = { version = "1", features = ["raw_value"] }
 ed25519-compact = "1.0"
 base64 = "0.13"
 # Temporary; should be moved to fluctlight-main
-reqwest = { version = "0.11", features = ["blocking"]}
+# reqwest = { version = "0.11", features = ["blocking"]}
 percent-encoding = "2.1"
 sha2 = "0.10"
 askama = "0.11"
 breezy-timer = { version = "1.0", features = ["breezy_timer"] }
+file-lock = "2.1"
+flate2 = "1.0"
+rayon = "1.5"

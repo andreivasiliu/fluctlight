@@ -93,6 +93,7 @@ Data structures:
   * Therefore, they are stable array indexes
   * The individual cells still need a history of modifications
   * Iteration would be O(n), lookup would be mostly O(1)
+* Idea: Perhaps something with globally unique state branch ID
 
 Flows:
 * Client asks to join over federation
@@ -123,12 +124,24 @@ Trusting federation:
 * Backfill can assign unknown state IDs at branches
   * This should detect many same-state merges of non-state messages
 
-PDU storage:
+PDU disk storage:
 * Need to choose between:
   * Super-compact: store interned strings
   * Super-compatible: store exact JSON replica
-* Likely a choice that can be 
+* Likely a choice that can be changed later
 * JSON replica store:
   * JSON stream of individual PDUs
   * Separate index with pointers to file and start/end offsets
   * Separate map with event_id to index
+* Would be nice to store:
+  * The original PDU
+  * The origin and time it was received
+  * In what way it was received (join state, transaction, backfill)
+  * The computed event_id (even if it's wrong)
+  * Which events it merges state from (as an optimization)
+* Would be nice to organize events in:
+  * Join/genesis event, and/or smallest depth trusted event
+  * Trusted state at event (perhaps only as state IDs?)
+  * State events or state merging events
+  * Normal events
+

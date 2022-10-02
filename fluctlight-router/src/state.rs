@@ -5,12 +5,12 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use ed25519_compact::KeyPair;
+use ed25519_compact::{KeyPair, PublicKey};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     matrix_types::{Event, Id, Key, Room, ServerName},
-    playground::{AnyContent, PDU},
+    playground::ParsedPDU,
     rendered_json::RenderedJson,
     server_keys::{ServerKeys, VerifyKey},
 };
@@ -19,8 +19,9 @@ pub(crate) struct State {
     // pub users: BTreeMap<Box<Id<User>>, UserState>,
     pub server_key_pairs: BTreeMap<Box<Id<Key>>, ServerKeyPair>,
     pub server_name: Box<Id<ServerName>>,
-    pub foreign_server_keys: BTreeMap<Box<Id<ServerName>>, Vec<ServerKeys>>,
-    pub foreign_server_keys_json: BTreeMap<Box<Id<ServerName>>, Vec<RenderedJson<'static, ServerKeys>>>,
+    pub foreign_server_keys_json:
+        BTreeMap<Box<Id<ServerName>>, Vec<RenderedJson<'static, ServerKeys>>>,
+    pub foreign_key_cache: BTreeMap<(Box<Id<ServerName>>, Box<Id<Key>>), PublicKey>,
     persistent: RwLock<Persistent>,
     ephemeral: RwLock<Ephemeral>,
 }
@@ -49,7 +50,7 @@ pub(crate) struct RoomState {
 
 #[derive(Default)]
 pub(crate) struct EphemeralRoomState {
-    pub pdus: BTreeMap<Box<Id<Event>>, PDU<AnyContent>>,
+    pub pdus: BTreeMap<Box<Id<Event>>, ParsedPDU>,
     pub pdus_by_timestamp: BTreeMap<TimeStamp, Box<Id<Event>>>,
 }
 
@@ -137,6 +138,25 @@ impl State {
 
         foreign_server_keys.extend(load_foreign_keys());
 
+        let mut foreign_key_cache = BTreeMap::new();
+
+        for (server_name, server_keys_list) in &foreign_server_keys {
+            for server_keys in server_keys_list {
+                for (key_name, verify_key) in &server_keys.verify_keys {
+                    let public_key = &verify_key.key;
+                    let public_key_bytes =
+                        base64::decode_config(public_key, base64::STANDARD_NO_PAD)
+                            .expect("Key already validated");
+                    let public_key =
+                        PublicKey::from_slice(&public_key_bytes).expect("Key already validated");
+
+                    let key_id = (server_name.to_owned(), key_name.to_owned());
+                    foreign_key_cache.insert(key_id, public_key);
+                    // FIXME: Check that it wasn't overwritten with something else
+                }
+            }
+        }
+
         let persistent = Persistent::load();
         let ephemeral = Ephemeral {
             rooms: BTreeMap::new(),
@@ -146,8 +166,8 @@ impl State {
             // users: BTreeMap::new(),
             server_key_pairs,
             server_name: Id::try_boxed_from_str("fluctlight-dev.demi.ro").unwrap(),
-            foreign_server_keys,
             foreign_server_keys_json,
+            foreign_key_cache,
             persistent: RwLock::new(persistent),
             ephemeral: RwLock::new(ephemeral),
         }
@@ -199,24 +219,14 @@ impl State {
         f(&mut *ephemeral)
     }
 
-    pub fn get_server_key(&self, server_name: &Id<ServerName>, key_name: &Id<Key>) -> Option<&str> {
-        let server_keys = self.foreign_server_keys.get(server_name)?;
-
-        // FIXME: Should be optimized to a map
-        for server_key in server_keys {
-            if let Some(key) = server_key.verify_keys.get(key_name) {
-                return Some(&key.key);
-            }
-
-            if let Some(old_verify_keys) = &server_key.old_verify_keys {
-                // FIXME: Timestamp should not be ignored
-                if let Some(key) = old_verify_keys.get(key_name) {
-                    return Some(&key.key);
-                }
-            }
-        }
-
-        None
+    pub fn get_server_key(
+        &self,
+        server_name: &Id<ServerName>,
+        key_name: &Id<Key>,
+    ) -> Option<&PublicKey> {
+        // FIXME: Timestamp should not be ignored
+        self.foreign_key_cache
+            .get(&(server_name.to_owned(), key_name.to_owned()))
     }
 }
 
@@ -351,4 +361,3 @@ fn load_foreign_keys() -> BTreeMap<Box<Id<ServerName>>, Vec<ServerKeys>> {
     let key_file = std::fs::File::open("foreign_keys.json").unwrap();
     serde_json::from_reader(key_file).unwrap()
 }
-

@@ -1,6 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-use ed25519_compact::{PublicKey, Signature};
+use ed25519_compact::Signature;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use smallvec::SmallVec;
@@ -73,13 +73,9 @@ pub(crate) trait Signable: Serialize {
     fn signatures_mut(&mut self) -> &mut Option<Signatures>;
     fn signatures(&self) -> &Option<Signatures>;
 
-    fn take_event_id(&mut self) -> Option<Box<Id<Event>>>;
-    fn put_event_id(&mut self, event_id: Option<Box<Id<Event>>>);
-
     fn sign(&mut self, state: &State) {
         let mut signatures = self.signatures_mut().take().unwrap_or_default();
         // FIXME: take unsigned
-        let event_id = self.take_event_id();
         let mut server_signatures = BTreeMap::new();
 
         let bytes = serde_json::to_vec(&self).expect("Serialization should always succeed");
@@ -101,16 +97,14 @@ pub(crate) trait Signable: Serialize {
             .insert(state.server_name.to_owned(), server_signatures);
 
         *self.signatures_mut() = Some(signatures);
-        self.put_event_id(event_id);
     }
 
-    fn verify(&mut self, state: &State, server_name: &Id<ServerName>, missing_keys: &mut BTreeSet<(Box<Id<ServerName>>, Box<Id<Key>>)>) -> Result<(), &'static str> {
+    fn verify(&mut self, state: &State, server_name: &Id<ServerName>) -> Result<(), &'static str> {
         // FIXME: This is horrible
         let signatures = match self.signatures_mut().take() {
             Some(signatures) => signatures,
             None => return Err("The object has no signatures"),
         };
-        let event_id = self.take_event_id();
 
         let bytes = serde_json::to_vec(self).expect("Serialization should always succeed");
 
@@ -123,7 +117,6 @@ pub(crate) trait Signable: Serialize {
             Some(value) => value,
             None => {
                 *self.signatures_mut() = Some(signatures);
-                self.put_event_id(event_id);
                 return Err("Not signed by the expected server");
             }
         };
@@ -131,51 +124,38 @@ pub(crate) trait Signable: Serialize {
         for (key_name, signature) in server_signatures {
             let public_key = match state.get_server_key(server_name, key_name) {
                 Some(value) => value,
-                None => {
-                    missing_keys.insert((server_name.to_owned(), key_name.to_owned()));
-                    continue;
-                }
+                None => continue,
             };
-
-            // TODO: Should be stored as already decoded somewhere
-            let public_key_bytes =
-                base64::decode_config(public_key, base64::STANDARD_NO_PAD)
-                    .expect("Key already validated");
-            let verify_key =
-                PublicKey::from_slice(&public_key_bytes).expect("Key already validated");
 
             let signature_bytes = base64::decode_config(signature, base64::STANDARD_NO_PAD)
                 .expect("Signature already validated");
-            let signature = Signature::from_slice(&signature_bytes)
-                .expect("Signature already validated");
+            let signature =
+                Signature::from_slice(&signature_bytes).expect("Signature already validated");
 
-            match verify_key.verify(&bytes, &signature) {
+            match public_key.verify(&bytes, &signature) {
                 Ok(()) => {
                     *self.signatures_mut() = Some(signatures);
-                    self.put_event_id(event_id);
                     return Ok(());
                 }
                 Err(err) => {
                     // TODO: Figure out if this is just a warning or if
                     // the check needs to abort here
-                    eprintln!(
-                        "Verifying signable: \n---\n{}\n---\n",
-                        String::from_utf8_lossy(&bytes)
-                    );
-                    eprintln!("Key check on {:?} for {} failed: {}", event_id, key_name, err);
+                    // eprintln!(
+                    //     "Verifying signable: \n---\n{}\n---\n",
+                    //     String::from_utf8_lossy(&bytes)
+                    // );
+                    eprintln!("Key check for {} failed: {}", key_name, err);
                 }
             }
         }
 
         *self.signatures_mut() = Some(signatures);
-        self.put_event_id(event_id);
 
         Err("No keys succeeded")
     }
 }
 
 pub(crate) trait Hashable: Signable + Serialize {
-    fn event_id_mut(&mut self) -> &mut Option<Box<Id<Event>>>;
     fn hashes_mut(&mut self) -> &mut Option<BTreeMap<String, String>>;
 
     fn hash(&mut self) {
@@ -184,7 +164,6 @@ pub(crate) trait Hashable: Signable + Serialize {
 
         let signatures = self.signatures_mut().take();
         let mut hashes = self.hashes_mut().take().unwrap_or_default();
-        self.event_id_mut().take();
 
         let mut hasher = sha2::Sha256::new();
         serde_json::to_writer(&mut hasher, &self).expect("Serialization should always succeed");
@@ -209,6 +188,7 @@ pub(crate) trait Hashable: Signable + Serialize {
 
         *self.hashes_mut() = Some(hashes);
 
+        /* No longer generating here, see method below
         let mut hasher = sha2::Sha256::new();
         serde_json::to_writer(&mut hasher, &self).expect("Serialization should always succeed");
         let sha256_hash = hasher.finalize();
@@ -228,13 +208,13 @@ pub(crate) trait Hashable: Signable + Serialize {
             .expect("Base64 is always a string");
 
         let event_id = Id::<Event>::try_boxed_from_str(b64_sha256_hash).expect("Valid event ID");
+        */
 
         *self.signatures_mut() = signatures;
-        *self.event_id_mut() = Some(event_id);
+        // *self.event_id_mut() = Some(event_id);
     }
 
-    fn generate_event_id(&mut self) {
-        self.event_id_mut().take();
+    fn generate_event_id(&mut self) -> Box<Id<Event>> {
         let signatures = self.signatures_mut().take();
 
         let mut hasher = sha2::Sha256::new();
@@ -259,7 +239,8 @@ pub(crate) trait Hashable: Signable + Serialize {
 
         let event_id = Id::<Event>::try_boxed_from_str(b64_sha256_hash).expect("Valid event ID");
 
-        *self.event_id_mut() = Some(event_id);
         *self.signatures_mut() = signatures;
+
+        event_id
     }
 }
