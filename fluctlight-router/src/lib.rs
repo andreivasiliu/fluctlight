@@ -4,6 +4,7 @@ use fluctlight_mod_interface::{ModuleState, OpaqueModuleState, Request, Response
 use playground::load_room;
 
 mod canonical_hash;
+mod interner;
 mod matrix_types;
 mod persistence;
 mod playground;

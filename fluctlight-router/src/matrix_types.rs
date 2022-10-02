@@ -1,4 +1,7 @@
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    sync::Arc,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +37,15 @@ impl MatrixId for Key {}
 impl<T> Id<T> {
     pub fn as_str(&self) -> &str {
         &self.content
+    }
+
+    pub fn to_arc(&self) -> Arc<Self> {
+        let str_value = self.as_str();
+        let arc_value: Arc<str> = str_value.into();
+
+        // SAFETY: repr(transparent) and the phantom's zero-size make these
+        // types equivalent.
+        unsafe { std::mem::transmute::<Arc<str>, Arc<Id<T>>>(arc_value) }
     }
 }
 

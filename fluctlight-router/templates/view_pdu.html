@@ -40,6 +40,15 @@
         </p>
 
         <p>
+            Interned ID:
+            {% if pdu.arc_event_id.is_some() -%}
+                {{ pdu.arc_event_id.as_ref().unwrap() }}
+            {%- else -%}
+                n/a
+            {%- endif %}
+        </p>
+
+        <p>
             Signature check:
             {% if pdu.signature_check.is_some() %}
                 {% if pdu.signature_check.unwrap().is_ok() %}

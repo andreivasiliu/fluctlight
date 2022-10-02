@@ -6,6 +6,7 @@ use serde_json::{json, value::RawValue};
 
 use crate::{
     canonical_hash::verify_content_hash,
+    interner::{ArcStr, Interner},
     matrix_types::{Event, Id, Room, ServerName, User},
     persistence::{PDUBlob, RoomPersistence},
     server_keys::{Hashable, Signable, Signatures},
@@ -186,6 +187,7 @@ pub(crate) fn load_join_event() -> Result<(), Box<dyn Error>> {
     {
         let parsed_pdu = ParsedPDU {
             event_id: None,
+            arc_event_id: None,
             pdu: parse_pdu(event)?,
             blob: event.to_owned(),
             signature_check: None,
@@ -258,6 +260,7 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
 
         pdus.push(ParsedPDU {
             event_id: Some(pdu_blob.event_id.to_owned()),
+            arc_event_id: None,
             pdu: parsed_pdu,
             blob: pdu_blob.pdu_blob.to_owned(),
             signature_check: None,
@@ -265,6 +268,18 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
         })
     }
     timer.stop("reparsing events");
+
+    eprintln!("Intern event IDs...");
+    timer.start("intern events");
+    let mut interner = Interner::new();
+
+    for parsed_pdu in &mut pdus {
+        if let Some(event_id) = &parsed_pdu.event_id {
+            parsed_pdu.arc_event_id = Some(interner.get_or_insert(&event_id));
+        }
+    }
+
+    timer.stop("intern events");
 
     eprintln!("Checking event hashes...");
     timer.start("hash events");
@@ -380,6 +395,7 @@ fn parse_pdu(event: &RawValue) -> Result<PDU<AnyContent>, std::io::Error> {
 
 pub(crate) struct ParsedPDU {
     pub event_id: Option<Box<Id<Event>>>,
+    pub arc_event_id: Option<ArcStr<Id<Event>>>,
     pub pdu: PDU<AnyContent>,
     pub blob: Box<RawValue>,
     pub signature_check: Option<Result<(), &'static str>>,
