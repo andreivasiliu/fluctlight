@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 {% macro pdu_link(ephemeral, room_id, pdu_id) %}
-{% let parsed_pdu = ephemeral.rooms[room_id].pdus.get(std::ops::Deref::deref(pdu_id)) %}
+{% let parsed_pdu = ephemeral.rooms[room_id].pdus.get(pdu_id.as_id()) %}
 {% if parsed_pdu.is_none() %}
 <a href="/admin/view/pdu/{{room_id}}/{{pdu_id}}">{{ pdu_id }}</a>: unknown
 {% else %}

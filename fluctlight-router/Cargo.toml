@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 [dependencies]
 fluctlight-mod-interface = { path = "../fluctlight-mod-interface" }
 url = "2.2"
-smallvec = "1.8"
+smallvec = { version = "1.8", features = ["serde"] }
 http = "0.2.4"
 bumpalo = { version = "3.9", features = ["collections"] }
 serde = { version = "1", features = ["derive"] }

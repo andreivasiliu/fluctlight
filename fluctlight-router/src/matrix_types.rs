@@ -39,6 +39,10 @@ impl<T> Id<T> {
         &self.content
     }
 
+    pub fn as_id(&self) -> &Id<T> {
+        self
+    }
+
     pub fn to_arc(&self) -> Arc<Self> {
         let str_value = self.as_str();
         let arc_value: Arc<str> = str_value.into();
@@ -46,6 +50,12 @@ impl<T> Id<T> {
         // SAFETY: repr(transparent) and the phantom's zero-size make these
         // types equivalent.
         unsafe { std::mem::transmute::<Arc<str>, Arc<Id<T>>>(arc_value) }
+    }
+
+    pub fn to_box(&self) -> Box<Self> {
+        let boxed: Box<str> = self.as_str().into();
+
+        unsafe { std::mem::transmute::<Box<str>, Box<Id<T>>>(boxed) }
     }
 }
 

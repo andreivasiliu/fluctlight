@@ -7,6 +7,7 @@ use smallvec::SmallVec;
 
 use crate::{
     matrix_types::{Event, Id, Key, ServerName},
+    pdu_ref::SignaturesRef,
     state::{ServerKeyPair, State, TimeStamp},
 };
 
@@ -98,14 +99,15 @@ pub(crate) trait Signable: Serialize {
 
         *self.signatures_mut() = Some(signatures);
     }
+}
 
-    fn verify(&mut self, state: &State, server_name: &Id<ServerName>) -> Result<(), &'static str> {
-        // FIXME: This is horrible
-        let signatures = match self.signatures_mut().take() {
-            Some(signatures) => signatures,
-            None => return Err("The object has no signatures"),
-        };
-
+pub(crate) trait Verifiable: Serialize {
+    fn verify(
+        &self,
+        state: &State,
+        server_name: &Id<ServerName>,
+        signatures: &SignaturesRef<'_>,
+    ) -> Result<(), &'static str> {
         let bytes = serde_json::to_vec(self).expect("Serialization should always succeed");
 
         // eprintln!(
@@ -116,7 +118,6 @@ pub(crate) trait Signable: Serialize {
         let server_signatures = match signatures.signatures.get(server_name) {
             Some(value) => value,
             None => {
-                *self.signatures_mut() = Some(signatures);
                 return Err("Not signed by the expected server");
             }
         };
@@ -134,7 +135,6 @@ pub(crate) trait Signable: Serialize {
 
             match public_key.verify(&bytes, &signature) {
                 Ok(()) => {
-                    *self.signatures_mut() = Some(signatures);
                     return Ok(());
                 }
                 Err(err) => {
@@ -149,20 +149,17 @@ pub(crate) trait Signable: Serialize {
             }
         }
 
-        *self.signatures_mut() = Some(signatures);
-
         Err("No keys succeeded")
     }
 }
 
-pub(crate) trait Hashable: Signable + Serialize {
+pub(crate) trait Hashable: Serialize {
     fn hashes_mut(&mut self) -> &mut Option<BTreeMap<String, String>>;
 
     fn hash(&mut self) {
         let mut scratch_buffer = SmallVec::<[u8; 64]>::new();
         scratch_buffer.resize(64, 0);
 
-        let signatures = self.signatures_mut().take();
         let mut hashes = self.hashes_mut().take().unwrap_or_default();
 
         let mut hasher = sha2::Sha256::new();
@@ -210,13 +207,10 @@ pub(crate) trait Hashable: Signable + Serialize {
         let event_id = Id::<Event>::try_boxed_from_str(b64_sha256_hash).expect("Valid event ID");
         */
 
-        *self.signatures_mut() = signatures;
         // *self.event_id_mut() = Some(event_id);
     }
 
     fn generate_event_id(&mut self) -> Box<Id<Event>> {
-        let signatures = self.signatures_mut().take();
-
         let mut hasher = sha2::Sha256::new();
         serde_json::to_writer(&mut hasher, &self).expect("Serialization should always succeed");
         let sha256_hash = hasher.finalize();
@@ -238,8 +232,6 @@ pub(crate) trait Hashable: Signable + Serialize {
             .expect("Base64 is always a string");
 
         let event_id = Id::<Event>::try_boxed_from_str(b64_sha256_hash).expect("Valid event ID");
-
-        *self.signatures_mut() = signatures;
 
         event_id
     }
