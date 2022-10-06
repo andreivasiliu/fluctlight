@@ -9,6 +9,7 @@ use ed25519_compact::{KeyPair, PublicKey};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    interner::ArcStr,
     matrix_types::{Event, Id, Key, Room, ServerName},
     playground::ParsedPDU,
     rendered_json::RenderedJson,
@@ -30,6 +31,7 @@ pub(crate) struct State {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Persistent {
     pub rooms: BTreeMap<Box<Id<Room>>, RoomState>,
+    pub net_log_index: usize,
 }
 
 // TODO: Same as above, but even quicker, and even dirtier
@@ -50,8 +52,8 @@ pub(crate) struct RoomState {
 
 #[derive(Default)]
 pub(crate) struct EphemeralRoomState {
-    pub pdus: BTreeMap<Box<Id<Event>>, ParsedPDU>,
-    pub pdus_by_timestamp: BTreeMap<TimeStamp, Box<Id<Event>>>,
+    pub pdus: BTreeMap<ArcStr<Id<Event>>, ParsedPDU>,
+    pub pdus_by_timestamp: BTreeMap<TimeStamp, ArcStr<Id<Event>>>,
 }
 
 #[derive(Clone)]
@@ -236,6 +238,7 @@ impl Persistent {
             eprintln!("Creating new persistent state...");
             return Persistent {
                 rooms: BTreeMap::new(),
+                net_log_index: 0,
             };
         }
 

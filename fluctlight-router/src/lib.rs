@@ -6,6 +6,7 @@ use playground::load_room;
 mod canonical_hash;
 mod interner;
 mod matrix_types;
+mod net_log;
 mod pdu_arc;
 mod pdu_owned;
 mod pdu_ref;

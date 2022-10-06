@@ -291,7 +291,10 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
         event_id: Box<Id<Event>>,
         pdu_blob: Box<RawValue>,
     }
-    println!("Allocated before parsing: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
+    println!(
+        "Allocated before parsing: {}MB",
+        crate::ALLOCATOR.allocated() / 1024 / 1024
+    );
 
     let partial_pdus: Vec<_> = pdu_blobs
         .into_par_iter()
@@ -320,14 +323,18 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
         })
         .collect();
 
-    println!("Allocated after parsing: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
+    println!(
+        "Allocated after parsing: {}MB",
+        crate::ALLOCATOR.allocated() / 1024 / 1024
+    );
     let mut pdus = Vec::with_capacity(partial_pdus.len());
 
     println!(
         "Added {} ref PDUs of size {}, total: {}",
         partial_pdus.len(),
         std::mem::size_of::<crate::pdu_ref::PDURef<crate::pdu_ref::AnyContentRef>>(),
-        std::mem::size_of::<crate::pdu_ref::PDURef<crate::pdu_ref::AnyContentRef>>() * partial_pdus.len(),
+        std::mem::size_of::<crate::pdu_ref::PDURef<crate::pdu_ref::AnyContentRef>>()
+            * partial_pdus.len(),
     );
 
     for partial_pdu in partial_pdus {
@@ -343,10 +350,16 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
         });
     }
 
-    println!("Allocated after interning: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
+    println!(
+        "Allocated after interning: {}MB",
+        crate::ALLOCATOR.allocated() / 1024 / 1024
+    );
 
     drop(pdu_bytes);
-    println!("Allocated after dropping bytes: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
+    println!(
+        "Allocated after dropping bytes: {}MB",
+        crate::ALLOCATOR.allocated() / 1024 / 1024
+    );
 
     interner.print_memory_usage();
 
@@ -382,17 +395,22 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
     //     eprintln!();
     // }
     timer.stop("hash events");
-    println!("Allocated after hashing: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
+    println!(
+        "Allocated after hashing: {}MB",
+        crate::ALLOCATOR.allocated() / 1024 / 1024
+    );
 
     eprintln!("Mapping events in memory...");
     timer.start("store events");
 
     let room_id = pdus[0].pdu.room_id.to_box();
-    let mut room_pdus: BTreeMap<Box<Id<Event>>, ParsedPDU> = BTreeMap::new();
-    let mut room_pdus_by_timestamp: BTreeMap<TimeStamp, Box<Id<Event>>> = BTreeMap::new();
+    let mut room_pdus: BTreeMap<ArcStr<Id<Event>>, ParsedPDU> = BTreeMap::new();
+    let mut room_pdus_by_timestamp: BTreeMap<TimeStamp, ArcStr<Id<Event>>> = BTreeMap::new();
 
     for parsed_pdu in pdus {
-        let event_id = parsed_pdu.event_id.as_ref().expect("Just created").clone();
+        let event_id = parsed_pdu.event_id.as_ref().expect("Just created");
+
+        let event_id = interner.get_or_insert(event_id.as_id());
 
         room_pdus_by_timestamp.insert(parsed_pdu.pdu.origin_server_ts, event_id.clone());
         room_pdus.insert(event_id, parsed_pdu);
@@ -404,7 +422,10 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
         room.pdus = room_pdus;
         room.pdus_by_timestamp = room_pdus_by_timestamp;
     });
-    println!("Allocated after storing: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
+    println!(
+        "Allocated after storing: {}MB",
+        crate::ALLOCATOR.allocated() / 1024 / 1024
+    );
 
     timer.stop("store events");
 

@@ -6,7 +6,10 @@ use serde::{de::MapAccess, forward_to_deserialize_any, Deserialize, Deserializer
 use smallvec::SmallVec;
 
 use crate::{
-    routes_admin::admin_api_handler, routes_federation::federation_api_handler, state::State,
+    net_log::{log_network_request, log_network_response},
+    routes_admin::admin_api_handler,
+    routes_federation::federation_api_handler,
+    state::State,
 };
 
 pub(crate) struct RequestData<'a> {
@@ -147,6 +150,14 @@ pub(super) fn try_process_request<'a>(
         .body(request.body())
         .expect("Request should always be valid");
 
+    let log_index = state.with_persistent_mut(|state| {
+        let index = state.net_log_index;
+        state.net_log_index += 1;
+        index
+    });
+
+    log_network_request(log_index, &http_request, "in");
+
     let memory_pool = bumpalo::Bump::with_capacity(256);
     let request_data = RequestData {
         memory_pool: &memory_pool,
@@ -168,8 +179,23 @@ pub(super) fn try_process_request<'a>(
         ));
     };
 
+    if let Err(err) = &http_response {
+        // FIXME: This should probably be done by the main code too
+        log_network_response(
+            log_index,
+            &http::Response::builder()
+                .status(501)
+                .header("Content-Type", "text/plain")
+                .body(err.to_string().into_bytes())
+                .unwrap(),
+            "in",
+        );
+    }
+
     let http_response =
         http_response.map_err(|err| format!("Could not process request: {}", err))?;
+
+    log_network_response(log_index, &http_response, "in");
 
     let content_type = match http_response
         .headers()

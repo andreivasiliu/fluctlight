@@ -93,34 +93,19 @@ impl<T: ?Sized> TypedInterner<T> {
     }
 }
 
-/*
-impl<I> TypedInterner<Id<I>> {
-    pub(crate) fn get_or_insert(&mut self, value: &Id<I>) -> ArcStr<Id<I>> {
-        if let Some(interned_value) = self.interned_strings.get(value) {
-            interned_value.clone()
-        } else {
-            let new_value = ArcStr {
-                int_str: IntStr {
-                    id: self.next_id,
-                    phantom: Default::default(),
-                },
-                inner: value.to_arc(),
-            };
-            self.interned_strings.insert(new_value.clone());
-            new_value
-        }
-    }
-}
-*/
-
 impl<T: Internable + ?Sized> TypedInterner<T> {
     pub(crate) fn get_or_insert(&mut self, value: &T) -> ArcStr<T> {
         if let Some(interned_value) = self.interned_strings.get(value) {
             interned_value.clone()
         } else {
+            if self.next_id == usize::MAX {
+                panic!("Reached interner's limit!");
+            }
+            let id = self.next_id;
+            self.next_id += 1;
             let new_value = ArcStr {
                 int_str: IntStr {
-                    id: self.next_id,
+                    id,
                     phantom: Default::default(),
                 },
                 inner: value.to_arc(),
@@ -161,12 +146,42 @@ impl Interner {
 
         let mut total_bytes: usize = 0;
 
-        total_bytes += self.event_interner.interned_strings.iter().map(|s| s.as_str().len()).sum::<usize>();
-        total_bytes += self.user_interner.interned_strings.iter().map(|s| s.as_str().len()).sum::<usize>();
-        total_bytes += self.server_name_interner.interned_strings.iter().map(|s| s.as_str().len()).sum::<usize>();
-        total_bytes += self.room_interner.interned_strings.iter().map(|s| s.as_str().len()).sum::<usize>();
-        total_bytes += self.key_interner.interned_strings.iter().map(|s| s.as_str().len()).sum::<usize>();
-        total_bytes += self.str_interner.interned_strings.iter().map(|s| s.len()).sum::<usize>();
+        total_bytes += self
+            .event_interner
+            .interned_strings
+            .iter()
+            .map(|s| s.as_str().len())
+            .sum::<usize>();
+        total_bytes += self
+            .user_interner
+            .interned_strings
+            .iter()
+            .map(|s| s.as_str().len())
+            .sum::<usize>();
+        total_bytes += self
+            .server_name_interner
+            .interned_strings
+            .iter()
+            .map(|s| s.as_str().len())
+            .sum::<usize>();
+        total_bytes += self
+            .room_interner
+            .interned_strings
+            .iter()
+            .map(|s| s.as_str().len())
+            .sum::<usize>();
+        total_bytes += self
+            .key_interner
+            .interned_strings
+            .iter()
+            .map(|s| s.as_str().len())
+            .sum::<usize>();
+        total_bytes += self
+            .str_interner
+            .interned_strings
+            .iter()
+            .map(|s| s.len())
+            .sum::<usize>();
 
         println!(
             "Total: {} strings, with {} overhead",
