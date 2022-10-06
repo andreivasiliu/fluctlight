@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
+use vec_collections::{AbstractVecMap, VecMap1};
 
 use crate::{
     interner::{ArcStr, Interner},
@@ -17,7 +18,7 @@ pub(crate) struct PDUArc {
     pub auth_events: SmallVec<[ArcStr<Id<Event>>; 4]>,
     pub content: AnyContent,
     pub depth: u64,
-    pub hashes: Option<BTreeMap<ArcStr<str>, String>>,
+    pub hashes: Option<VecMap1<ArcStr<str>, String>>,
     pub origin: Option<ArcStr<Id<ServerName>>>,
     pub origin_server_ts: TimeStamp,
     pub prev_events: SmallVec<[ArcStr<Id<Event>>; 2]>,
@@ -31,21 +32,19 @@ pub(crate) struct PDUArc {
 }
 
 impl PDUArc {
-    pub(crate) fn from_pdu_ref<'a>(pdu_ref: &'_ PDURef<'a, AnyContentRef<'a>>) -> Self {
-        let mut interner = Interner::new();
-
+    pub(crate) fn from_pdu_ref<'a>(pdu_ref: &'_ PDURef<'a, AnyContentRef<'a>>, interner: &mut Interner) -> Self {
         PDUArc {
             auth_events: pdu_ref
                 .auth_events
                 .iter()
                 .map(|&event| interner.get_or_insert(event))
                 .collect(),
-            content: AnyContent::from_ref(&pdu_ref.content, &mut interner),
+            content: AnyContent::from_ref(&pdu_ref.content, interner),
             depth: pdu_ref.depth,
             hashes: pdu_ref.hashes.as_ref().map(|hashes| {
                 hashes
                     .iter()
-                    .map(|(&key, &value)| (interner.get_or_insert(key), value.to_owned()))
+                    .map(|(key, value)| (interner.get_or_insert(*key), value.to_string()))
                     .collect()
             }),
             origin: pdu_ref.origin.map(|origin| interner.get_or_insert(origin)),
@@ -67,27 +66,27 @@ impl PDUArc {
                 signatures: signatures
                     .signatures
                     .iter()
-                    .map(|(&server_name, signatures)| {
+                    .map(|(server_name, signatures)| {
                         (
-                            interner.get_or_insert(server_name),
+                            interner.get_or_insert(*server_name),
                             signatures
                                 .iter()
-                                .map(|(&key, &signature)| {
-                                    (interner.get_or_insert(key), signature.to_owned())
+                                .map(|(key, signature)| {
+                                    (interner.get_or_insert(*key), signature.to_string())
                                 })
                                 .collect(),
                         )
                     })
                     .collect(),
             }),
-            state_key: AnyState::from_ref(&pdu_ref.state_key, &mut interner),
+            state_key: AnyState::from_ref(&pdu_ref.state_key, interner),
             pdu_type: interner.get_or_insert(&pdu_ref.pdu_type),
         }
     }
 }
 
 pub(crate) struct Signatures {
-    pub signatures: BTreeMap<ArcStr<Id<ServerName>>, BTreeMap<ArcStr<Id<Key>>, String>>,
+    pub signatures: VecMap1<ArcStr<Id<ServerName>>, VecMap1<ArcStr<Id<Key>>, String>>,
 }
 
 pub(crate) struct MemberContent {
@@ -245,7 +244,7 @@ pub(crate) enum AnyState {
 impl AnyState {
     fn from_ref(state_ref: &AnyStateRef, interner: &mut Interner) -> Self {
         match state_ref {
-            AnyStateRef::UserId(user_id) => AnyState::UserId(interner.get_or_insert(user_id)),
+            AnyStateRef::UserId(user_id) => AnyState::UserId(interner.get_or_insert(&user_id.user_id)),
             AnyStateRef::ServerName(server_name) => {
                 AnyState::ServerName(interner.get_or_insert(server_name))
             }

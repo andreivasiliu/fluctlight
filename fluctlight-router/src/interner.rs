@@ -140,6 +140,42 @@ impl Interner {
         let typed_interner = T::get_typed_interner(self);
         typed_interner.get_or_insert(value)
     }
+
+    pub(crate) fn print_memory_usage(&self) {
+        let lengths = [
+            ("events", self.event_interner.interned_strings.len()),
+            ("users", self.user_interner.interned_strings.len()),
+            ("servers", self.server_name_interner.interned_strings.len()),
+            ("rooms", self.room_interner.interned_strings.len()),
+            ("keys", self.key_interner.interned_strings.len()),
+            ("strings", self.str_interner.interned_strings.len()),
+        ];
+        let mut total = 0;
+
+        println!("Interned strings:");
+
+        for (name, length) in lengths {
+            println!("* {}: {}", name, length);
+            total += length;
+        }
+
+        let mut total_bytes: usize = 0;
+
+        total_bytes += self.event_interner.interned_strings.iter().map(|s| s.as_str().len()).sum::<usize>();
+        total_bytes += self.user_interner.interned_strings.iter().map(|s| s.as_str().len()).sum::<usize>();
+        total_bytes += self.server_name_interner.interned_strings.iter().map(|s| s.as_str().len()).sum::<usize>();
+        total_bytes += self.room_interner.interned_strings.iter().map(|s| s.as_str().len()).sum::<usize>();
+        total_bytes += self.key_interner.interned_strings.iter().map(|s| s.as_str().len()).sum::<usize>();
+        total_bytes += self.str_interner.interned_strings.iter().map(|s| s.len()).sum::<usize>();
+
+        println!(
+            "Total: {} strings, with {} overhead",
+            total,
+            total * std::mem::size_of::<Arc<ArcStr<str>>>(),
+        );
+
+        println!("Total bytes by interned strings: {}", total_bytes);
+    }
 }
 
 impl Interner {

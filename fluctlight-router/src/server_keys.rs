@@ -102,7 +102,7 @@ pub(crate) trait Signable: Serialize {
 }
 
 pub(crate) trait Verifiable: Serialize {
-    fn verify(
+    fn verify<'a, 'b>(
         &self,
         state: &State,
         server_name: &Id<ServerName>,
@@ -115,7 +115,7 @@ pub(crate) trait Verifiable: Serialize {
         //     String::from_utf8_lossy(&bytes)
         // );
 
-        let server_signatures = match signatures.signatures.get(server_name) {
+        let server_signatures = match signatures.get_signatures(server_name) {
             Some(value) => value,
             None => {
                 return Err("Not signed by the expected server");

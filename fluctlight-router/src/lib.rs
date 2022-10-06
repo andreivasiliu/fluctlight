@@ -18,6 +18,11 @@ mod routes_federation;
 mod server_keys;
 mod state;
 
+use cap::Cap;
+
+#[global_allocator]
+static ALLOCATOR: Cap<std::alloc::System> = Cap::new(std::alloc::System, usize::max_value());
+
 #[no_mangle]
 pub extern "C" fn process_request<'a>(request: Request<'a>) -> ResponseResult {
     eprintln!("Hello: {}", request.uri());
@@ -41,7 +46,9 @@ pub extern "C" fn process_request<'a>(request: Request<'a>) -> ResponseResult {
 pub extern "C" fn create_state() -> OpaqueModuleState {
     let state = Box::new(state::State::new());
 
+    println!("Usage before: {}MB", ALLOCATOR.allocated() / 1024 / 1024);
     load_room(&state).expect("Could not load state.");
+    println!("Usage after: {}MB", ALLOCATOR.allocated() / 1024 / 1024);
 
     let module_state = ModuleState { state };
 

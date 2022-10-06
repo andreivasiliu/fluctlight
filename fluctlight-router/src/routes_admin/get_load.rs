@@ -36,12 +36,14 @@ pub(super) fn get_admin_load<'r>(
         load_join_event().unwrap();
     }
 
+    println!("Usage before: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
     match load_room(&request_data.state) {
         Ok(value) => value,
         Err(err) => {
             eprintln!("Error: {}", err);
         }
     };
+    println!("Usage after: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
 
     Response { text }
 }

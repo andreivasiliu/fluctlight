@@ -3,6 +3,7 @@ use std::{borrow::Cow, collections::BTreeMap};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use smallvec::SmallVec;
+use vec_collections::VecMap1;
 
 use crate::{
     matrix_types::{Event, Id, Key, Room, ServerName, User},
@@ -17,7 +18,7 @@ pub(crate) struct PDURef<'a, Content: PDUContentType<'a>> {
     pub content: Content,
     pub depth: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub hashes: Option<BTreeMap<&'a str, &'a str>>,
+    pub hashes: Option<VecMap1<&'a str, &'a str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<&'a Id<ServerName>>,
     pub origin_server_ts: TimeStamp,
@@ -40,7 +41,18 @@ pub(crate) struct PDURef<'a, Content: PDUContentType<'a>> {
 #[serde(transparent)]
 pub(crate) struct SignaturesRef<'a> {
     #[serde(borrow)]
-    pub signatures: BTreeMap<&'a Id<ServerName>, BTreeMap<&'a Id<Key>, &'a str>>,
+    pub signatures: VecMap1<&'a Id<ServerName>, VecMap1<&'a Id<Key>, &'a str>>,
+}
+
+impl<'a> SignaturesRef<'a> {
+    pub(crate) fn get_signatures<'s>(&'s self, server_name: &Id<ServerName>) -> Option<&'s VecMap1<&'a Id<Key>, &'a str>> {
+        for (server, signatures) in &self.signatures {
+            if *server == server_name {
+                return Some(signatures);
+            }
+        }
+        None
+    }
 }
 
 pub(crate) fn parse_pdu_ref(
@@ -169,6 +181,13 @@ pub(crate) struct HistoryVisibilityContent<'a> {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct EmptyContent {}
 
+#[derive(Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct UserStateKey<'a> {
+    #[serde(borrow)]
+    pub user_id: Cow<'a, Id<User>>,
+}
+
 /// The state key for certain event types must always be an empty string.
 pub(crate) struct EmptyStateKey;
 
@@ -204,7 +223,7 @@ pub(crate) trait PDUContentType<'a> {
 }
 
 impl<'a> PDUContentType<'a> for MemberContent<'a> {
-    type StateKey = Cow<'a, Id<User>>;
+    type StateKey = UserStateKey<'a>;
 
     fn upcast(self) -> AnyContentRef<'a> {
         AnyContentRef::Member(self)
@@ -297,7 +316,7 @@ pub(crate) enum AnyContentRef<'a> {
 }
 
 pub(crate) enum AnyStateRef<'a> {
-    UserId(Cow<'a, Id<User>>),
+    UserId(UserStateKey<'a>),
     ServerName(&'a Id<ServerName>),
     Empty(EmptyStateKey),
     Other(&'a str),

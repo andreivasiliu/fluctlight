@@ -5,11 +5,11 @@ use serde_json::{json, value::RawValue};
 
 use crate::{
     canonical_hash::verify_content_hash,
-    interner::ArcStr,
+    interner::{ArcStr, Interner},
     matrix_types::{Event, Id},
     pdu_arc::PDUArc,
     pdu_owned::{MakeJoinResponse, SendJoinResponse},
-    pdu_ref::parse_pdu_ref,
+    pdu_ref::{parse_pdu_ref, AnyContentRef, PDURef},
     persistence::{PDUBlob, RoomPersistence},
     server_keys::{Hashable, Signable, Verifiable},
     state::{State, TimeStamp},
@@ -192,6 +192,8 @@ pub(crate) fn load_join_event() -> Result<(), Box<dyn Error>> {
     eprintln!("Auth events: {:?}", send_join_response.auth_chain.len());
     eprintln!("State events: {:?}", send_join_response.state.len());
 
+    let mut interner = Interner::new();
+
     eprintln!("Parsing events...");
     timer.start("parse events");
 
@@ -205,7 +207,7 @@ pub(crate) fn load_join_event() -> Result<(), Box<dyn Error>> {
     {
         // let pdu = parse_pdu(event).unwrap();
         let pdu_ref = parse_pdu_ref(event)?;
-        let pdu_arc = PDUArc::from_pdu_ref(&pdu_ref);
+        let pdu_arc = PDUArc::from_pdu_ref(&pdu_ref, &mut interner);
         let parsed_pdu = ParsedPDU {
             event_id: None,
             arc_event_id: None,
@@ -281,7 +283,17 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
         pdu_blobs.push(pdu_blob);
     }
 
-    let mut pdus: Vec<_> = pdu_blobs
+    let mut interner = Interner::new();
+
+    struct PartialPDU<'a> {
+        pdu_ref: PDURef<'a, AnyContentRef<'a>>,
+        signature_check: Result<(), &'static str>,
+        event_id: Box<Id<Event>>,
+        pdu_blob: Box<RawValue>,
+    }
+    println!("Allocated before parsing: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
+
+    let partial_pdus: Vec<_> = pdu_blobs
         .into_par_iter()
         .map(|pdu_blob| {
             let pdu_ref = parse_pdu_ref(&pdu_blob.pdu_blob).unwrap();
@@ -291,26 +303,60 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
 
             let signature_check = pdu_ref.verify(state, sender_name, signatures);
 
-            let pdu_arc = PDUArc::from_pdu_ref(&pdu_ref);
+            // if let AnyStateRef::UserId(UserStateKey { user_id }) = &pdu_ref.state_key {
+            //     if let std::borrow::Cow::Owned(user_id) = &user_id {
+            //         panic!("{user_id} was owned");
+            //     }
+            // }
 
-            ParsedPDU {
-                event_id: Some(pdu_blob.event_id.to_owned()),
-                arc_event_id: None,
-                pdu: pdu_arc,
-                blob: pdu_blob.pdu_blob.to_owned(),
-                signature_check: Some(signature_check),
-                hash_check: None,
+            // let empty_blob: Box<RawValue> = serde_json::from_str("42").unwrap();
+
+            PartialPDU {
+                pdu_ref,
+                signature_check,
+                pdu_blob: pdu_blob.pdu_blob.to_owned(),
+                event_id: pdu_blob.event_id.to_owned(),
             }
         })
         .collect();
 
+    println!("Allocated after parsing: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
+    let mut pdus = Vec::with_capacity(partial_pdus.len());
+
+    println!(
+        "Added {} ref PDUs of size {}, total: {}",
+        partial_pdus.len(),
+        std::mem::size_of::<crate::pdu_ref::PDURef<crate::pdu_ref::AnyContentRef>>(),
+        std::mem::size_of::<crate::pdu_ref::PDURef<crate::pdu_ref::AnyContentRef>>() * partial_pdus.len(),
+    );
+
+    for partial_pdu in partial_pdus {
+        let pdu_arc = PDUArc::from_pdu_ref(&partial_pdu.pdu_ref, &mut interner);
+
+        pdus.push(ParsedPDU {
+            event_id: Some(partial_pdu.event_id),
+            arc_event_id: None,
+            pdu: pdu_arc,
+            blob: partial_pdu.pdu_blob,
+            signature_check: Some(partial_pdu.signature_check),
+            hash_check: None,
+        });
+    }
+
+    println!("Allocated after interning: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
+
+    drop(pdu_bytes);
+    println!("Allocated after dropping bytes: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
+
+    interner.print_memory_usage();
+
     timer.stop("reparsing events");
 
     println!(
-        "Added {} PDUs of size {}, total: {}",
+        "Added {} arc PDUs of size {}, total: {}",
         pdus.len(),
-        std::mem::size_of::<crate::pdu_ref::PDURef<crate::pdu_ref::AnyContentRef>>(),
-        std::mem::size_of::<crate::pdu_ref::PDURef<crate::pdu_ref::AnyContentRef>>() * pdus.len(),
+        std::mem::size_of::<crate::pdu_arc::PDUArc>(),
+        std::mem::size_of::<crate::pdu_arc::PDUArc>() * pdus.len(),
     );
 
     eprintln!("Checking event hashes...");
@@ -336,6 +382,7 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
     //     eprintln!();
     // }
     timer.stop("hash events");
+    println!("Allocated after hashing: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
 
     eprintln!("Mapping events in memory...");
     timer.start("store events");
@@ -357,6 +404,7 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
         room.pdus = room_pdus;
         room.pdus_by_timestamp = room_pdus_by_timestamp;
     });
+    println!("Allocated after storing: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
 
     timer.stop("store events");
 

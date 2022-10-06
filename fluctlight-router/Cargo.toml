@@ -27,3 +27,5 @@ breezy-timer = { version = "1.0", features = ["breezy_timer"] }
 file-lock = "2.1"
 flate2 = "1.0"
 rayon = "1.5"
+vec-collections = "0.4"
+cap = "0.1"
