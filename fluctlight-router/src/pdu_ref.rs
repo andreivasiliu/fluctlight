@@ -7,7 +7,7 @@ use vec_collections::VecMap1;
 
 use crate::{
     matrix_types::{Event, Id, Key, Room, ServerName, User},
-    server_keys::Verifiable,
+    server_keys::{EventHashable, Verifiable},
     state::TimeStamp,
 };
 
@@ -31,6 +31,7 @@ pub(crate) struct PDURef<'a, Content: PDUContentType<'a>> {
     // Serialization is done for signing
     #[serde(skip_serializing)]
     pub signatures: Option<SignaturesRef<'a>>,
+    #[serde(skip_serializing_if = "Content::missing_state")]
     pub state_key: Content::StateKey,
     #[serde(rename = "type")]
     pub pdu_type: &'a str,
@@ -45,7 +46,10 @@ pub(crate) struct SignaturesRef<'a> {
 }
 
 impl<'a> SignaturesRef<'a> {
-    pub(crate) fn get_signatures<'s>(&'s self, server_name: &Id<ServerName>) -> Option<&'s VecMap1<&'a Id<Key>, &'a str>> {
+    pub(crate) fn get_signatures<'s>(
+        &'s self,
+        server_name: &Id<ServerName>,
+    ) -> Option<&'s VecMap1<&'a Id<Key>, &'a str>> {
         for (server, signatures) in &self.signatures {
             if *server == server_name {
                 return Some(signatures);
@@ -102,6 +106,13 @@ struct PDUTypeOnly<'a> {
 }
 
 impl<'a, C> Verifiable for PDURef<'a, C>
+where
+    C: PDUContentType<'a> + Serialize,
+    C::StateKey: Serialize,
+{
+}
+
+impl<'a, C> EventHashable for PDURef<'a, C>
 where
     C: PDUContentType<'a> + Serialize,
     C::StateKey: Serialize,
@@ -220,6 +231,14 @@ pub(crate) trait PDUContentType<'a> {
 
     fn upcast(self) -> AnyContentRef<'a>;
     fn upcast_state(state_key: Self::StateKey) -> AnyStateRef<'a>;
+
+    fn has_state(_state_key: &Self::StateKey) -> bool {
+        true
+    }
+
+    fn missing_state(state_key: &Self::StateKey) -> bool {
+        !Self::has_state(state_key)
+    }
 }
 
 impl<'a> PDUContentType<'a> for MemberContent<'a> {
@@ -294,7 +313,7 @@ impl<'a> PDUContentType<'a> for RoomAliasesContent<'a> {
 }
 
 impl<'a> PDUContentType<'a> for EmptyContent {
-    type StateKey = &'a str;
+    type StateKey = Option<&'a str>;
 
     fn upcast(self) -> AnyContentRef<'a> {
         AnyContentRef::Other(self)
@@ -302,6 +321,10 @@ impl<'a> PDUContentType<'a> for EmptyContent {
 
     fn upcast_state(state_key: Self::StateKey) -> AnyStateRef<'a> {
         AnyStateRef::Other(state_key)
+    }
+
+    fn has_state(state_key: &Self::StateKey) -> bool {
+        state_key.is_some()
     }
 }
 
@@ -319,7 +342,7 @@ pub(crate) enum AnyStateRef<'a> {
     UserId(UserStateKey<'a>),
     ServerName(&'a Id<ServerName>),
     Empty(EmptyStateKey),
-    Other(&'a str),
+    Other(Option<&'a str>),
 }
 
 impl<'a> PDUContentType<'a> for AnyContentRef<'a> {
@@ -331,6 +354,13 @@ impl<'a> PDUContentType<'a> for AnyContentRef<'a> {
 
     fn upcast_state(state_key: Self::StateKey) -> AnyStateRef<'a> {
         state_key
+    }
+
+    fn has_state(state_key: &Self::StateKey) -> bool {
+        match state_key {
+            AnyStateRef::Other(state) => state.is_some(),
+            _ => true,
+        }
     }
 }
 

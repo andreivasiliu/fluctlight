@@ -2,6 +2,7 @@ use std::{borrow::Borrow, collections::BTreeSet, fmt::Display, ops::Deref, sync:
 
 use crate::matrix_types::{Event, Id, Key, Room, ServerName, User};
 
+#[derive(Default)]
 pub(crate) struct Interner {
     event_interner: TypedInterner<Id<Event>>,
     user_interner: TypedInterner<Id<User>>,
@@ -25,6 +26,15 @@ pub(crate) struct ArcStr<T: ?Sized> {
 pub(crate) struct IntStr<T: ?Sized> {
     id: usize,
     phantom: std::marker::PhantomData<T>,
+}
+
+impl<T: ?Sized> Default for TypedInterner<T> {
+    fn default() -> Self {
+        Self {
+            interned_strings: Default::default(),
+            next_id: Default::default(),
+        }
+    }
 }
 
 impl<T: ?Sized + PartialEq> PartialEq for ArcStr<T> {
@@ -81,15 +91,6 @@ impl<T: ?Sized> Deref for ArcStr<T> {
 
     fn deref(&self) -> &Self::Target {
         &self.inner
-    }
-}
-
-impl<T: ?Sized> TypedInterner<T> {
-    pub(crate) fn new() -> Self {
-        TypedInterner {
-            interned_strings: BTreeSet::new(),
-            next_id: 0,
-        }
     }
 }
 
@@ -195,14 +196,7 @@ impl Interner {
 
 impl Interner {
     pub(crate) fn new() -> Self {
-        Interner {
-            event_interner: TypedInterner::new(),
-            user_interner: TypedInterner::new(),
-            server_name_interner: TypedInterner::new(),
-            room_interner: TypedInterner::new(),
-            key_interner: TypedInterner::new(),
-            str_interner: TypedInterner::new(),
-        }
+        Self::default()
     }
 }
 

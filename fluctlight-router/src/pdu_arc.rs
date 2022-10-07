@@ -32,7 +32,10 @@ pub(crate) struct PDUArc {
 }
 
 impl PDUArc {
-    pub(crate) fn from_pdu_ref<'a>(pdu_ref: &'_ PDURef<'a, AnyContentRef<'a>>, interner: &mut Interner) -> Self {
+    pub(crate) fn from_pdu_ref<'a>(
+        pdu_ref: &'_ PDURef<'a, AnyContentRef<'a>>,
+        interner: &mut Interner,
+    ) -> Self {
         PDUArc {
             auth_events: pdu_ref
                 .auth_events
@@ -238,18 +241,20 @@ pub(crate) enum AnyState {
     UserId(ArcStr<Id<User>>),
     ServerName(ArcStr<Id<ServerName>>),
     Empty(EmptyStateKey),
-    Other(String),
+    Other(Option<String>),
 }
 
 impl AnyState {
     fn from_ref(state_ref: &AnyStateRef, interner: &mut Interner) -> Self {
         match state_ref {
-            AnyStateRef::UserId(user_id) => AnyState::UserId(interner.get_or_insert(&user_id.user_id)),
+            AnyStateRef::UserId(user_id) => {
+                AnyState::UserId(interner.get_or_insert(&user_id.user_id))
+            }
             AnyStateRef::ServerName(server_name) => {
                 AnyState::ServerName(interner.get_or_insert(server_name))
             }
             AnyStateRef::Empty(crate::pdu_ref::EmptyStateKey) => AnyState::Empty(EmptyStateKey),
-            AnyStateRef::Other(other) => AnyState::Other(other.to_string()),
+            AnyStateRef::Other(other) => AnyState::Other(other.map(|state| state.to_string())),
         }
     }
 }

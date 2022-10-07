@@ -13,3 +13,5 @@ url = "2.2"
 libloading = "0.7"
 tokio-inotify = "0.4"
 futures-util = { version = "0.3.21", default-features = false, features = ["compat"] }
+tls-listener = { version = "0.5", features = ["hyper-h1", "rustls"] }
+tokio-rustls = "0.23"

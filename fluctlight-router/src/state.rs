@@ -9,7 +9,7 @@ use ed25519_compact::{KeyPair, PublicKey};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    interner::ArcStr,
+    interner::{ArcStr, Interner},
     matrix_types::{Event, Id, Key, Room, ServerName},
     playground::ParsedPDU,
     rendered_json::RenderedJson,
@@ -54,6 +54,7 @@ pub(crate) struct RoomState {
 pub(crate) struct EphemeralRoomState {
     pub pdus: BTreeMap<ArcStr<Id<Event>>, ParsedPDU>,
     pub pdus_by_timestamp: BTreeMap<TimeStamp, ArcStr<Id<Event>>>,
+    pub interner: Interner,
 }
 
 #[derive(Clone)]

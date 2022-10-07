@@ -1,11 +1,17 @@
 use std::{convert::Infallible, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use hyper::{
+    server::conn::AddrIncoming,
     service::{make_service_fn, service_fn},
     Body, Request, Response, Server,
 };
 use libloading::library_filename;
+use tls_listener::TlsListener;
 use tokio_inotify::{AsyncINotify, IN_CREATE};
+use tokio_rustls::{
+    rustls::{Certificate, PrivateKey, ServerConfig},
+    TlsAcceptor,
+};
 
 use crate::error::Result;
 use crate::libloader::MainModule;
@@ -20,10 +26,12 @@ fn main() -> Result<()> {
         .build()
         .unwrap();
 
-    eprintln!("Creating server at http://localhost:3000/admin/view");
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    eprintln!("Creating server at http://127.1.0.2:8008/admin/view");
+    let addr = SocketAddr::from(([127, 1, 0, 2], 8008));
 
     let main_module = Arc::new(MainModule::new().unwrap());
+
+    let main_module_2 = main_module.clone();
 
     tokio_runtime.spawn(watch_module(main_module.clone()));
 
@@ -47,10 +55,49 @@ fn main() -> Result<()> {
         )
     };
 
-    let server = tokio_runtime.block_on(make_server)?;
+    let http_server = tokio_runtime.block_on(make_server)?;
+    eprintln!("HTTP server is ready.");
 
-    eprintln!("Server is ready.");
-    tokio_runtime.block_on(server)?;
+    let make_tls_server = async {
+        let addr = SocketAddr::from(([127, 1, 0, 2], 8448));
+        let acceptor: TlsAcceptor = {
+            let key = PrivateKey(include_bytes!("../../key.der").as_slice().into());
+            let cert = Certificate(include_bytes!("../../cert.der").as_slice().into());
+
+            Arc::new(
+                ServerConfig::builder()
+                    .with_safe_defaults()
+                    .with_no_client_auth()
+                    .with_single_cert(vec![cert], key)
+                    .unwrap(),
+            )
+            .into()
+        };
+
+        let incoming = TlsListener::new(acceptor, AddrIncoming::bind(&addr)?);
+
+        let make_service = make_service_fn(move |_conn| {
+            let main_module = main_module_2.clone();
+            async {
+                Ok::<_, Infallible>(service_fn(move |request: Request<Body>| {
+                    let main_module = main_module.clone();
+                    process_request_in_module(main_module, request)
+                }))
+            }
+        });
+
+        std::result::Result::<_, hyper::Error>::Ok(
+            Server::builder(incoming)
+                .serve(make_service)
+                .with_graceful_shutdown(shutdown_signal()),
+        )
+    };
+    let https_server = tokio_runtime.block_on(make_tls_server)?;
+    eprintln!("HTTPS server is ready.");
+
+    tokio_runtime.spawn(http_server);
+    let handle = tokio_runtime.spawn(https_server);
+    tokio_runtime.block_on(handle)??;
 
     eprintln!("Shutdown complete.");
 

@@ -209,15 +209,21 @@ pub(crate) trait Hashable: Serialize {
 
         // *self.event_id_mut() = Some(event_id);
     }
+}
 
-    fn generate_event_id(&mut self) -> Box<Id<Event>> {
+pub(crate) trait EventHashable: Serialize {
+    fn generate_event_id(&self) -> Box<Id<Event>> {
+        // Note: this appears to be slower than just allocating; like it's
+        // losing a lot of optimization opportunities. For now this is here
+        // just for show and experimentation.
         let mut hasher = sha2::Sha256::new();
         serde_json::to_writer(&mut hasher, &self).expect("Serialization should always succeed");
         let sha256_hash = hasher.finalize();
 
+        // let bytes: String = serde_json::to_string(self).unwrap();
         // eprintln!(
-        //     "Hashing hashable: \n---\n{}\n---\n",
-        //     String::from_utf8_lossy(&bytes)
+        //     "Generating ID for: \n---\n{}\n---\n",
+        //     bytes
         // );
 
         let mut scratch_buffer = SmallVec::<[u8; 64]>::new();

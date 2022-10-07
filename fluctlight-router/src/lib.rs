@@ -1,7 +1,6 @@
 use std::panic::catch_unwind;
 
 use fluctlight_mod_interface::{ModuleState, OpaqueModuleState, Request, ResponseResult};
-use playground::load_room;
 
 mod canonical_hash;
 mod interner;
@@ -20,6 +19,7 @@ mod server_keys;
 mod state;
 
 use cap::Cap;
+use playground::load_persistent_rooms;
 
 #[global_allocator]
 static ALLOCATOR: Cap<std::alloc::System> = Cap::new(std::alloc::System, usize::max_value());
@@ -47,9 +47,11 @@ pub extern "C" fn process_request<'a>(request: Request<'a>) -> ResponseResult {
 pub extern "C" fn create_state() -> OpaqueModuleState {
     let state = Box::new(state::State::new());
 
-    println!("Usage before: {}MB", ALLOCATOR.allocated() / 1024 / 1024);
-    load_room(&state).expect("Could not load state.");
-    println!("Usage after: {}MB", ALLOCATOR.allocated() / 1024 / 1024);
+    // println!("Usage before: {}MB", ALLOCATOR.allocated() / 1024 / 1024);
+    // load_room(&state).expect("Could not load state.");
+    // println!("Usage after: {}MB", ALLOCATOR.allocated() / 1024 / 1024);
+
+    load_persistent_rooms(&state);
 
     let module_state = ModuleState { state };
 

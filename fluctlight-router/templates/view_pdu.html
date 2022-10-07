@@ -32,11 +32,7 @@
 
         <p>
             Stored ID:
-            {% if pdu.event_id.is_some() -%}
-                {% call pdu_link(ephemeral, room_id, pdu.event_id.as_ref().unwrap()) %}
-            {%- else -%}
-                n/a
-            {%- endif %}
+            {% call pdu_link(ephemeral, room_id, pdu.event_id) %}
         </p>
 
         <p>

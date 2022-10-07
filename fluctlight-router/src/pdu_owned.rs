@@ -8,11 +8,11 @@ use serde_json::value::RawValue;
 
 use crate::{
     matrix_types::{Event, Id, Room, ServerName, User},
-    server_keys::{Hashable, Signable, Signatures},
+    server_keys::{EventHashable, Hashable, Signable, Signatures},
     state::TimeStamp,
 };
 
-fn parse_pdu(event: &RawValue) -> Result<PDU<AnyContent>, std::io::Error> {
+pub(crate) fn parse_pdu(event: &RawValue) -> Result<PDU<AnyContent>, std::io::Error> {
     let pdu: PDUTypeOnly = serde_json::from_str(event.get())?;
 
     let pdu = match &*pdu.pdu_type {
@@ -115,6 +115,13 @@ where
     fn hashes_mut(&mut self) -> &mut Option<BTreeMap<String, String>> {
         &mut self.hashes
     }
+}
+
+impl<C> EventHashable for PDU<C>
+where
+    C: PDUContentType + Serialize,
+    C::StateKey: Serialize,
+{
 }
 
 impl<C: PDUContentType> PDU<C> {
@@ -294,7 +301,7 @@ impl PDUContentType for RoomAliasesContent {
 }
 
 impl PDUContentType for EmptyContent {
-    type StateKey = String;
+    type StateKey = Option<String>;
 
     fn upcast(self) -> AnyContent {
         AnyContent::Other(self)
@@ -319,7 +326,7 @@ pub(crate) enum AnyState {
     UserId(Box<Id<User>>),
     ServerName(Box<Id<ServerName>>),
     Empty(EmptyStateKey),
-    Other(String),
+    Other(Option<String>),
 }
 
 impl PDUContentType for AnyContent {

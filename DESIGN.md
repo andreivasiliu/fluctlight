@@ -116,6 +116,10 @@ Flows:
     * Outgoing key query (multiple)
   * Incoming federated response (could perhaps be done earlier)
 
+Response borrowing:
+* Use a request.response(..data..) API in order to borrow data
+* Routes can require BuiltResponse as an output
+
 Trusting federation:
 * Federated room state cannot be fully validated
 * Maintain a trust-depth

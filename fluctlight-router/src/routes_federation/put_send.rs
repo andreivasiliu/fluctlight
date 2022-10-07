@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
 use crate::{
-    matrix_types::{Event, Id},
+    playground::ingest_transaction,
     request::{EmptyQS, GenericRequest, MatrixRequest, RequestData},
     state::TimeStamp,
 };
@@ -28,7 +28,7 @@ pub(super) struct RequestPath<'a> {
 #[derive(Serialize, Deserialize)]
 pub(super) struct RequestBody<'a> {
     #[serde(borrow)]
-    edus: Vec<&'a RawValue>,
+    edus: Option<Vec<&'a RawValue>>,
     origin: &'a str,
     origin_server_ts: TimeStamp,
     pdus: Vec<&'a RawValue>,
@@ -36,8 +36,9 @@ pub(super) struct RequestBody<'a> {
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct Response<'a> {
+    // FIXME: Should be Id<Event> (once borrowing is fixed)
     #[serde(borrow)]
-    pdus: BTreeMap<&'a Id<Event>, PDUProcessingResult<'a>>,
+    pdus: BTreeMap<&'a str, PDUProcessingResult<'a>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -47,23 +48,32 @@ struct PDUProcessingResult<'a> {
 }
 
 pub(super) fn put_federation_v1_send<'r>(
-    _request_data: &RequestData<'r>,
+    request_data: &RequestData<'r>,
     request: Request<'r>,
 ) -> Response<'r> {
     eprintln!("On transaction {}:", request.path.transaction_id);
-    for pdu in &request.body.pdus {
-        eprintln!("Got PDU: {}", pdu)
-    }
 
-    for edu in request.body.edus {
-        eprintln!("Got EDU: {}", edu);
-    }
+    let pdus = ingest_transaction(
+        request_data.state,
+        request.path.transaction_id,
+        request.body.origin,
+        request.body.origin_server_ts,
+        request.body.pdus,
+        request.body.edus.unwrap_or(vec![]),
+    );
 
-    if !request.body.pdus.is_empty() {
-        todo!("PDU parsing missing");
-    }
+    let pdus: BTreeMap<_, _> = pdus
+        .into_iter()
+        .map(|(event_id, value)| {
+            let event_id = request_data.new_str(event_id.as_str());
+            if let Err(err) = value {
+                let err = request_data.new_str(err.as_str());
+                (event_id, PDUProcessingResult { error: Some(err) })
+            } else {
+                (event_id, PDUProcessingResult { error: None })
+            }
+        })
+        .collect();
 
-    Response {
-        pdus: BTreeMap::new(),
-    }
+    Response { pdus }
 }

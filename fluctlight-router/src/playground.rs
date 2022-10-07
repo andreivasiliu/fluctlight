@@ -1,22 +1,27 @@
-use std::{collections::BTreeMap, error::Error, io::Write};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    io::Write,
+};
 
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use serde_json::{json, value::RawValue};
+use vec_collections::VecMap1;
 
 use crate::{
     canonical_hash::verify_content_hash,
     interner::{ArcStr, Interner},
-    matrix_types::{Event, Id},
+    matrix_types::{Event, Id, Key, Room},
     pdu_arc::PDUArc,
-    pdu_owned::{MakeJoinResponse, SendJoinResponse},
+    pdu_owned::{parse_pdu, MakeJoinResponse, SendJoinResponse},
     pdu_ref::{parse_pdu_ref, AnyContentRef, PDURef},
     persistence::{PDUBlob, RoomPersistence},
-    server_keys::{Hashable, Signable, Verifiable},
+    server_keys::{EventHashable, Hashable, Signable, Verifiable},
     state::{State, TimeStamp},
 };
 
 pub(crate) struct ParsedPDU {
-    pub event_id: Option<Box<Id<Event>>>,
+    pub event_id: Box<Id<Event>>,
     pub arc_event_id: Option<ArcStr<Id<Event>>>,
     pub pdu: PDUArc,
     pub blob: Box<RawValue>,
@@ -60,7 +65,7 @@ fn send_signed_request(
         String::from_utf8_lossy(&signable_bytes)
     );
 
-    let mut server_signatures = BTreeMap::new();
+    let mut server_signatures: VecMap1<Box<Id<Key>>, String> = VecMap1::empty();
 
     for (key_name, server_key) in &state.server_key_pairs {
         let noise = None;
@@ -207,9 +212,10 @@ pub(crate) fn load_join_event() -> Result<(), Box<dyn Error>> {
     {
         // let pdu = parse_pdu(event).unwrap();
         let pdu_ref = parse_pdu_ref(event)?;
+        let event_id = pdu_ref.generate_event_id();
         let pdu_arc = PDUArc::from_pdu_ref(&pdu_ref, &mut interner);
         let parsed_pdu = ParsedPDU {
-            event_id: None,
+            event_id: event_id,
             arc_event_id: None,
             pdu: pdu_arc,
             blob: event.to_owned(),
@@ -221,14 +227,6 @@ pub(crate) fn load_join_event() -> Result<(), Box<dyn Error>> {
     }
     timer.stop("parse events");
 
-    eprintln!("Generating event IDs...");
-    timer.start("generate event IDs");
-    // for parsed_pdu in &mut pdus {
-    // FIXME
-    //parsed_pdu.event_id = Some(parsed_pdu.pdu.generate_event_id());
-    // }
-    timer.stop("generate event IDs");
-
     eprintln!("Persisting events on disk...");
     timer.start("persist events");
     std::fs::remove_file("db.room.matrix_hq/state_pdus.json.gz").unwrap();
@@ -238,7 +236,7 @@ pub(crate) fn load_join_event() -> Result<(), Box<dyn Error>> {
 
     for parsed_pdu in &pdus {
         let pdu_blob = PDUBlob {
-            event_id: parsed_pdu.event_id.as_ref().unwrap(),
+            event_id: &parsed_pdu.event_id,
             pdu_blob: &parsed_pdu.blob,
         };
 
@@ -341,7 +339,7 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
         let pdu_arc = PDUArc::from_pdu_ref(&partial_pdu.pdu_ref, &mut interner);
 
         pdus.push(ParsedPDU {
-            event_id: Some(partial_pdu.event_id),
+            event_id: partial_pdu.event_id,
             arc_event_id: None,
             pdu: pdu_arc,
             blob: partial_pdu.pdu_blob,
@@ -408,7 +406,7 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
     let mut room_pdus_by_timestamp: BTreeMap<TimeStamp, ArcStr<Id<Event>>> = BTreeMap::new();
 
     for parsed_pdu in pdus {
-        let event_id = parsed_pdu.event_id.as_ref().expect("Just created");
+        let event_id = &parsed_pdu.event_id;
 
         let event_id = interner.get_or_insert(event_id.as_id());
 
@@ -421,6 +419,7 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
 
         room.pdus = room_pdus;
         room.pdus_by_timestamp = room_pdus_by_timestamp;
+        room.interner = interner;
     });
     println!(
         "Allocated after storing: {}MB",
@@ -439,4 +438,166 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+pub(crate) fn load_persistent_rooms(state: &crate::state::State) {
+    let mut rooms = BTreeSet::new();
+
+    state.with_persistent_mut(|persistent_state| {
+        for room_id in persistent_state.rooms.keys() {
+            rooms.insert(room_id.to_box());
+        }
+    });
+
+    for room_id in rooms {
+        eprintln!("Loading persistent room: {room_id}");
+        load_persistent_room(state, &room_id);
+    }
+}
+
+pub(crate) fn load_persistent_room(state: &crate::state::State, room_id: &Id<Room>) {
+    let mut pdu_blobs = Vec::new();
+
+    state.with_persistent_mut(|persistent_state| {
+        let room = persistent_state.rooms.get(room_id).unwrap();
+
+        for pdu_blob in &room.pdu_blobs {
+            let pdu_blob: Box<RawValue> = serde_json::from_str(pdu_blob).unwrap();
+            pdu_blobs.push(pdu_blob);
+        }
+    });
+
+    state.with_ephemeral_mut(|ephemeral_state| {
+        for pdu_blob in pdu_blobs {
+            let pdu_ref = parse_pdu_ref(&pdu_blob).unwrap();
+            let event_id = pdu_ref.generate_event_id();
+
+            let signatures = pdu_ref.signatures.as_ref().unwrap();
+            let sender_name = pdu_ref.sender.server_name();
+
+            let signature_check = pdu_ref.verify(state, sender_name, signatures);
+            let hash_check = verify_content_hash(pdu_blob.get(), false);
+
+            let room = ephemeral_state
+                .rooms
+                .entry(pdu_ref.room_id.to_owned())
+                .or_default();
+            let interner = &mut room.interner;
+
+            let pdu_arc = PDUArc::from_pdu_ref(&pdu_ref, interner);
+            let arc_event_id = interner.get_or_insert(event_id.as_id());
+            drop(pdu_ref);
+            let timestamp = pdu_arc.origin_server_ts;
+
+            let parsed_pdu = ParsedPDU {
+                event_id,
+                arc_event_id: Some(arc_event_id.clone()),
+                pdu: pdu_arc,
+                blob: pdu_blob,
+                signature_check: Some(signature_check),
+                hash_check: Some(hash_check),
+            };
+
+            room.pdus_by_timestamp
+                .insert(timestamp, arc_event_id.clone());
+            room.pdus.insert(arc_event_id, parsed_pdu);
+        }
+    });
+}
+
+pub(crate) fn ingest_transaction(
+    state: &crate::state::State,
+    transaction_id: &str,
+    origin: &str,
+    origin_server_ts: TimeStamp,
+    pdus: Vec<&RawValue>,
+    edus: Vec<&RawValue>,
+) -> BTreeMap<Box<Id<Event>>, Result<(), String>> {
+    let mut parsed_pdus = Vec::new();
+
+    let origin = Id::try_from_str(origin).unwrap();
+
+    let time = origin_server_ts.as_millis();
+
+    eprintln!("Transaction {transaction_id} from {origin} at {time}:");
+
+    for edu in edus {
+        eprintln!("* Got EDU: {}", edu);
+    }
+
+    for pdu in &pdus {
+        eprintln!("* Got PDU: {}", pdu);
+
+        match parse_pdu_ref(pdu) {
+            Ok(pdu_ref) => {
+                parsed_pdus.push((pdu_ref, *pdu));
+            }
+            Err(err) => {
+                eprintln!("* Error parsing PDU: {}", err);
+            }
+        }
+    }
+
+    let mut pdu_results = BTreeMap::new();
+
+    state.with_persistent_mut(|persistent_state| {
+        for (pdu_ref, pdu_blob) in &parsed_pdus {
+            if pdu_ref.room_id.as_str() == "!jhTIqlwlxKKoPPHIgH:synapse-dev.demi.ro" {
+                let pdu = parse_pdu(pdu_blob);
+
+                match pdu {
+                    Ok(mut pdu) => {
+                        pdu.origin = Some(origin.to_box());
+                        let event_id = pdu.generate_event_id();
+                        eprintln!("* Got persistent super-public room PDU: {event_id}");
+                        let room = persistent_state.rooms.get_mut(pdu.room_id.as_id()).unwrap();
+                        room.pdu_blobs.push(pdu_blob.get().to_owned());
+                    }
+                    Err(err) => {
+                        eprintln!("* Got error in super-public PDU: {err}");
+                    }
+                }
+            }
+        }
+    });
+
+    state.with_ephemeral_mut(|ephemeral_state| {
+        for (mut pdu_ref, pdu_blob) in parsed_pdus {
+            pdu_ref.origin = Some(origin);
+            let server_name = pdu_ref.sender.server_name();
+            let signatures = pdu_ref.signatures.as_ref().unwrap();
+            let signature_check = pdu_ref.verify(state, server_name, signatures);
+            let hash_check = verify_content_hash(pdu_blob.get(), false);
+
+            if let Some(room) = ephemeral_state.rooms.get_mut(pdu_ref.room_id) {
+                let interner = &mut room.interner;
+
+                let event_id = pdu_ref.generate_event_id();
+                let arc_event_id = interner.get_or_insert(&*event_id);
+                let pdu_arc = PDUArc::from_pdu_ref(&pdu_ref, interner);
+
+                if let Err(_err) = &signature_check {
+                    eprintln!("* Warning: Signature check failed: {event_id}");
+                }
+
+                if let Err(_err) = &hash_check {
+                    eprintln!("* Warning: Hash check failed: {event_id}");
+                }
+
+                let parsed_pdu = ParsedPDU {
+                    event_id: event_id.clone(),
+                    arc_event_id: Some(arc_event_id.clone()),
+                    pdu: pdu_arc,
+                    blob: pdu_blob.to_owned(),
+                    signature_check: Some(signature_check),
+                    hash_check: Some(hash_check),
+                };
+
+                room.pdus.insert(arc_event_id, parsed_pdu);
+                pdu_results.insert(event_id, Ok(()));
+            }
+        }
+    });
+
+    pdu_results
 }
