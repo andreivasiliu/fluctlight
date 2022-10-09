@@ -3,6 +3,7 @@ use std::panic::catch_unwind;
 use fluctlight_mod_interface::{ModuleState, OpaqueModuleState, Request, ResponseResult};
 
 mod canonical_hash;
+mod edu_ref;
 mod interner;
 mod matrix_types;
 mod net_log;

@@ -1,57 +1,46 @@
-<!DOCTYPE html>
-{% macro pdu_link(room_id, pdu_id) %}
-<a href="/admin/view/pdu/{{room_id}}/{{pdu_id}}">{{ pdu_id }}</a>
-{% endmacro %}
-<html>
-    <head>
-        <title>Fluctlight Admin View</title>
-        <style>
-            html {
-                background-color: #121212;
-                color: white;
-            }
-        </style>
-    </head>
-    
-    <body>
-        <h1>Fluctlight</h1>
-        <p>Persistent store rooms: {{ state.persistent().rooms.len() }}.</p>
+{% extends "base.html" %}
 
-        <p>Controls: <a href="/admin/load">load room</a></p>
+{% import "macros.html" as macros %}
 
-        <h3>Persistent rooms:</h3>
-        {% if state.persistent().rooms.is_empty() %}
-        <p>Nothing here.</p>
-        {% else %}
-        <ul>
-        {% let persistent = state.persistent() %}
-        {% for (room_name, room) in persistent.rooms %}
-            <li>Room {{ room_name }}: {{ room.pdu_blobs.len() }} PDUs</li>
-        {% endfor %}
-        {% endif %}
-        </ul>
+{% block title %}Fluctlight Admin View{% endblock %}
 
-        <h3>Ephemeral rooms:</h3>
-        {% if state.ephemeral().rooms.is_empty() %}
-        <p>Nothing here.</p>
-        {% else %}
-        <ul>
-        {% let ephemeral = state.ephemeral() %}
-        {% for (room_name, room) in ephemeral.rooms %}
-            <li>Room {{ room_name }}: {{ room.pdus.len() }} PDUs
-                <ul>
-                    {% for pdu_id in room.pdus_by_timestamp.values().take(6) %}
-                    <li>{% call pdu_link(room_name, pdu_id) %}</li>
-                    {% endfor %}
-                    <li>...</li>
-                    {% for pdu_id in room.pdus_by_timestamp.values().skip(6).rev().take(12).rev() %}
-                    <li>{% call pdu_link(room_name, pdu_id) %}</li>
-                    {% endfor %}
-                </ul>
-            </li>
-        {% endfor %}
-        {% endif %}
-        </ul>
+{% block content %}
+    <h1>Fluctlight</h1>
+    <p>Persistent store rooms: {{ state.persistent().rooms.len() }}.</p>
 
-    </body>
-</html>
+    <p>Controls: <a href="/admin/load">load room</a></p>
+
+    <h3>Persistent rooms:</h3>
+    {% if state.persistent().rooms.is_empty() %}
+    <p>Nothing here.</p>
+    {% else %}
+    <ul>
+    {% let persistent = state.persistent() %}
+    {% for (room_name, room) in persistent.rooms %}
+        <li>Room {{ room_name }}: {{ room.pdu_blobs.len() }} PDUs</li>
+    {% endfor %}
+    {% endif %}
+    </ul>
+
+    <h3>Ephemeral rooms:</h3>
+    {% if state.ephemeral().rooms.is_empty() %}
+    <p>Nothing here.</p>
+    {% else %}
+    <ul>
+    {% let ephemeral = state.ephemeral() %}
+    {% for (room_name, room) in ephemeral.rooms %}
+        <li>Room {{ room_name }}: {{ room.pdus.len() }} PDUs
+            <ul>
+                {% for pdu_id in room.pdus_by_timestamp.values().take(6) %}
+                <li>{% call macros::pdu_link(ephemeral, room_name, pdu_id) %}</li>
+                {% endfor %}
+                <li>...</li>
+                {% for pdu_id in room.pdus_by_timestamp.values().skip(6).rev().take(12).rev() %}
+                <li>{% call macros::pdu_link(ephemeral, room_name, pdu_id) %}</li>
+                {% endfor %}
+            </ul>
+        </li>
+    {% endfor %}
+    {% endif %}
+    </ul>
+{% endblock %}

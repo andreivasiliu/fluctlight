@@ -1,90 +1,75 @@
-<!DOCTYPE html>
-{% macro pdu_link(ephemeral, room_id, pdu_id) %}
-{% let parsed_pdu = ephemeral.rooms[room_id].pdus.get(pdu_id.as_id()) %}
-{% if parsed_pdu.is_none() %}
-<a href="/admin/view/pdu/{{room_id}}/{{pdu_id}}">{{ pdu_id }}</a>: unknown
-{% else %}
-<a href="/admin/view/pdu/{{room_id}}/{{pdu_id}}">{{ pdu_id }}</a>: <em>{{ parsed_pdu.unwrap().pdu.pdu_type }}</em>
-{% endif %}
-{% endmacro %}
-<html>
-    <head>
-        <title>Fluctlight PDU</title>
-        <style>
-            html {
-                background-color: #121212;
-                color: white;
-            }
-        </style>
-    </head>
+{% extends "base.html" %}
 
-    <body>
-        <h1>Fluctlight PDU</h1>
+{% import "macros.html" as macros %}
 
-        <p>Looking up:</p>
-        <ul>
-            <li>event: {{ event_id }}</li>
-            <li>room: {{ room_id }}</li>
-        </ul>
+{% block title %}Fluctlight PDU{% endblock %}
 
-        {% let ephemeral = state.ephemeral() %}
-        {% let pdu = ephemeral.rooms[room_id].pdus[event_id] %}
+{% block content %}
+    <h1>Fluctlight PDU</h1>
 
-        <p>
-            Stored ID:
-            {% call pdu_link(ephemeral, room_id, pdu.event_id) %}
-        </p>
+    <p>Looking up:</p>
+    <ul>
+        <li>event: {{ event_id }}</li>
+        <li>room: {{ room_id }}</li>
+    </ul>
 
-        <p>
-            Interned ID:
-            {% if pdu.arc_event_id.is_some() -%}
-                {{ pdu.arc_event_id.as_ref().unwrap() }}
-            {%- else -%}
-                n/a
-            {%- endif %}
-        </p>
+    {% let ephemeral = state.ephemeral() %}
+    {% let pdu = ephemeral.rooms[room_id].pdus[event_id] %}
 
-        <p>
-            Signature check:
-            {% if pdu.signature_check.is_some() %}
-                {% if pdu.signature_check.unwrap().is_ok() %}
-                    Okay
-                {% else %}
-                    {{ pdu.signature_check.unwrap().unwrap_err() }}
-                {% endif %}
-            {%- else -%}
-                n/a
-            {%- endif %}
-        </p>
+    <p>
+        Stored ID:
+        {% call macros::pdu_link(ephemeral, room_id, pdu.event_id) %}
+    </p>
 
-        <p>
-            Hash check:
-            {% if pdu.hash_check.is_some() %}
-                {% if pdu.hash_check.as_ref().unwrap().is_ok() %}
-                    Okay
-                {% else %}
-                    {{ pdu.hash_check.as_ref().unwrap().as_ref().unwrap_err() }}
-                {% endif %}
-            {%- else -%}
-                n/a
-            {%- endif %}
-        </p>
+    <p>
+        Interned ID:
+        {% if pdu.arc_event_id.is_some() -%}
+            {{ pdu.arc_event_id.as_ref().unwrap() }}
+        {%- else -%}
+            n/a
+        {%- endif %}
+    </p>
 
-        <p>Authentication events:</p>
-        <ul>
-        {% for event in pdu.pdu.auth_events %}
-            <li>{% call pdu_link(ephemeral, room_id, event) %}</li>
-        {% endfor %}
-        </ul>
+    <p>
+        Signature check:
+        {% if pdu.signature_check.is_some() %}
+            {% if pdu.signature_check.unwrap().is_ok() %}
+                Okay
+            {% else %}
+                {{ pdu.signature_check.unwrap().unwrap_err() }}
+            {% endif %}
+        {%- else -%}
+            n/a
+        {%- endif %}
+    </p>
 
-        <p>Previous events:</p>
-        <ul>
-        {% for event in pdu.pdu.prev_events %}
-            <li>{% call pdu_link(ephemeral, room_id, event) %}</li>
-        {% endfor %}
-        </ul>
+    <p>
+        Hash check:
+        {% if pdu.hash_check.is_some() %}
+            {% if pdu.hash_check.as_ref().unwrap().is_ok() %}
+                Okay
+            {% else %}
+                {{ pdu.hash_check.as_ref().unwrap().as_ref().unwrap_err() }}
+            {% endif %}
+        {%- else -%}
+            n/a
+        {%- endif %}
+    </p>
 
-        <p>PDU content:</p>
-        <pre>    {{ pdu.blob() }}</pre>
-    </body>
-</html>
+    <p>Authentication events:</p>
+    <ul>
+    {% for event in pdu.pdu.auth_events %}
+        <li>{% call macros::pdu_link(ephemeral, room_id, event) %}</li>
+    {% endfor %}
+    </ul>
+
+    <p>Previous events:</p>
+    <ul>
+    {% for event in pdu.pdu.prev_events %}
+        <li>{% call macros::pdu_link(ephemeral, room_id, event) %}</li>
+    {% endfor %}
+    </ul>
+
+    <p>PDU content:</p>
+    <pre>{{ pdu.render_pdu() }}</pre>
+{% endblock %}

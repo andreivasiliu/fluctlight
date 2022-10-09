@@ -107,6 +107,12 @@ Flows:
     * Outgoing key query
     * Outgoing missing events?
   * Incoming client response
+* Client sends a message
+  * Incoming client request
+  * Incoming client response
+  * Other clients' incoming syncs are triggered
+  * Background outgoing federation requests
+    * Outgoing retry timers created on failure
 * Federated server sends incoming PDU
   * Incoming federated request
     * Outgoing key query
@@ -115,6 +121,27 @@ Flows:
   * Outgoing state retrieval (multiple)
     * Outgoing key query (multiple)
   * Incoming federated response (could perhaps be done earlier)
+  * Other clients' incoming syncs are triggered
+* Client wants to sync from a room
+  * Incoming client request
+  * Potential outgoing backfill request
+    * Outgoing key query
+  * Potential outgoing state ID request
+    * Outgoing key query
+  * Potential outgoing event request
+    * Outgoing key query
+  * Incoming client response
+
+Handling flows:
+* Needs to honor the "Logic core, IO shell" section above
+* For out-of-band requests
+  * Logic core can maintain a list of named outgoing operations
+  * At startup/restart, it sends these to the IO shell
+  * IO shell likewise maintains a list of named outgoing requests
+* For in-band requests
+  * Logic core can reply with a redirection request
+* For timer-based operations
+  * Possibly similar design as out-of-band requests
 
 Response borrowing:
 * Use a request.response(..data..) API in order to borrow data

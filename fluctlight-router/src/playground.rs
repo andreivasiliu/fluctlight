@@ -5,19 +5,20 @@ use std::{
 };
 
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
-use serde_json::{json, value::RawValue};
+use serde::Deserialize;
+use serde_json::{json, value::RawValue, Value};
 use vec_collections::VecMap1;
 
 use crate::{
     canonical_hash::verify_content_hash,
     interner::{ArcStr, Interner},
     matrix_types::{Event, Id, Key, Room},
-    pdu_arc::PDUArc,
+    pdu_arc::{PDUArc, AnyContent},
     pdu_owned::{parse_pdu, MakeJoinResponse, SendJoinResponse},
     pdu_ref::{parse_pdu_ref, AnyContentRef, PDURef},
     persistence::{PDUBlob, RoomPersistence},
     server_keys::{EventHashable, Hashable, Signable, Verifiable},
-    state::{State, TimeStamp},
+    state::{State, TimeStamp}, edu_ref::parse_edu_ref,
 };
 
 pub(crate) struct ParsedPDU {
@@ -30,9 +31,53 @@ pub(crate) struct ParsedPDU {
 }
 
 impl ParsedPDU {
-    pub(crate) fn blob(&self) -> String {
-        self.blob.to_string()
+    pub(crate) fn render_contents(&self) -> String {
+        match &self.pdu.content {
+            AnyContent::Member(member) => {
+                format!("{} {}", self.pdu.sender, member.membership)
+            }
+            AnyContent::Create(create) => {
+                format!("{} created the room", create.creator)
+            },
+            AnyContent::JoinRules(rules) => {
+                format!("{} changed join rules to {}", self.pdu.sender, rules.join_rule)
+            },
+            AnyContent::PowerLevels(_) => {
+                format!("{} changed power levels", self.pdu.sender)
+            },
+            AnyContent::HistoryVisibility(visibility) => {
+                format!("{} made room {}", self.pdu.sender, visibility.history_visibility)
+            },
+            AnyContent::RoomAliases(_) => {
+                format!("{} set room aliases", self.pdu.sender)
+            },
+            AnyContent::Other(_) => {
+                match &*self.pdu.pdu_type {
+                    "m.room.message" => {
+                        let message_pdu: MessagePDU = serde_json::from_str(self.blob.get()).unwrap();
+                        format!("{} says \"{}\"", self.pdu.sender, message_pdu.content.body)
+                    }
+                    _ => format!("{} unknown", self.pdu.sender),
+                }
+            },
+        }
     }
+
+    pub(crate) fn render_pdu(&self) -> String {
+        let value: Value = serde_json::from_str(self.blob.get()).unwrap();
+        serde_json::to_string_pretty(&value).unwrap()
+    }
+}
+
+#[derive(Deserialize)]
+struct MessagePDU<'a> {
+    #[serde(borrow)]
+    content: MessageContent<'a>,
+}
+
+#[derive(Deserialize)]
+struct MessageContent<'a> {
+    body: &'a str,
 }
 
 fn send_signed_request(
@@ -522,7 +567,16 @@ pub(crate) fn ingest_transaction(
     eprintln!("Transaction {transaction_id} from {origin} at {time}:");
 
     for edu in edus {
-        eprintln!("* Got EDU: {}", edu);
+
+        match parse_edu_ref(edu) {
+            Ok(edu_ref) => {
+                eprintln!("* Parsed EDU: {}", edu_ref);
+            }
+            Err(err) => {
+                eprintln!("* Got EDU: {}", edu);
+                eprintln!("* Error parsing EDU: {}", err);
+            }
+        }
     }
 
     for pdu in &pdus {

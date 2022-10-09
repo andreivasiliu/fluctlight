@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>{% block title %}{% endblock %}</title>
+        <style>
+            html {
+                background-color: #121212;
+                color: white;
+            }
+            .pdu_id {
+                font-size: smaller;
+                font-family: monospace;
+            }
+            .pdu_type {
+                font-size: smaller;
+                color: darkgray;
+                font-style: italic;
+            }
+            .unknown_pdu {
+                font-size: smaller;
+                color: darkred;
+                font-style: italic;
+            }
+        </style>
+    </head>
+    
+    <body>
+        {% block content %}
+        {% endblock %}
+    </body>
+</html>

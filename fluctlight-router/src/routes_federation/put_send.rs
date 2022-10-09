@@ -51,8 +51,6 @@ pub(super) fn put_federation_v1_send<'r>(
     request_data: &RequestData<'r>,
     request: Request<'r>,
 ) -> Response<'r> {
-    eprintln!("On transaction {}:", request.path.transaction_id);
-
     let pdus = ingest_transaction(
         request_data.state,
         request.path.transaction_id,

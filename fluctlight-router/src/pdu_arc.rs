@@ -93,15 +93,15 @@ pub(crate) struct Signatures {
 }
 
 pub(crate) struct MemberContent {
-    membership: ArcStr<str>,
+    pub membership: ArcStr<str>,
 }
 
 pub(crate) struct CreateContent {
-    creator: ArcStr<str>,
+    pub creator: ArcStr<str>,
 }
 
 pub(crate) struct JoinRulesContent {
-    join_rule: ArcStr<str>,
+    pub join_rule: ArcStr<str>,
 }
 
 pub(crate) struct RoomAliasesContent {
@@ -125,7 +125,7 @@ pub(crate) struct PowerLevelsContent {
 }
 
 pub(crate) struct HistoryVisibilityContent {
-    history_visibility: ArcStr<str>,
+    pub history_visibility: ArcStr<str>,
 }
 
 pub(crate) struct EmptyContent {}
