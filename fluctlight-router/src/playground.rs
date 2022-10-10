@@ -5,20 +5,22 @@ use std::{
 };
 
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, value::RawValue, Value};
 use vec_collections::VecMap1;
 
 use crate::{
     canonical_hash::verify_content_hash,
+    edu_ref::parse_edu_ref,
     interner::{ArcStr, Interner},
     matrix_types::{Event, Id, Key, Room},
-    pdu_arc::{PDUArc, AnyContent},
+    pdu_arc::{AnyContent, PDUArc},
     pdu_owned::{parse_pdu, MakeJoinResponse, SendJoinResponse},
     pdu_ref::{parse_pdu_ref, AnyContentRef, PDURef},
     persistence::{PDUBlob, RoomPersistence},
     server_keys::{EventHashable, Hashable, Signable, Verifiable},
-    state::{State, TimeStamp}, edu_ref::parse_edu_ref,
+    signed_request::SignedRequestBuilder,
+    state::{State, TimeStamp},
 };
 
 pub(crate) struct ParsedPDU {
@@ -38,27 +40,31 @@ impl ParsedPDU {
             }
             AnyContent::Create(create) => {
                 format!("{} created the room", create.creator)
-            },
+            }
             AnyContent::JoinRules(rules) => {
-                format!("{} changed join rules to {}", self.pdu.sender, rules.join_rule)
-            },
+                format!(
+                    "{} changed join rules to {}",
+                    self.pdu.sender, rules.join_rule
+                )
+            }
             AnyContent::PowerLevels(_) => {
                 format!("{} changed power levels", self.pdu.sender)
-            },
+            }
             AnyContent::HistoryVisibility(visibility) => {
-                format!("{} made room {}", self.pdu.sender, visibility.history_visibility)
-            },
+                format!(
+                    "{} made room {}",
+                    self.pdu.sender, visibility.history_visibility
+                )
+            }
             AnyContent::RoomAliases(_) => {
                 format!("{} set room aliases", self.pdu.sender)
-            },
-            AnyContent::Other(_) => {
-                match &*self.pdu.pdu_type {
-                    "m.room.message" => {
-                        let message_pdu: MessagePDU = serde_json::from_str(self.blob.get()).unwrap();
-                        format!("{} says \"{}\"", self.pdu.sender, message_pdu.content.body)
-                    }
-                    _ => format!("{} unknown", self.pdu.sender),
+            }
+            AnyContent::Other(_) => match &*self.pdu.pdu_type {
+                "m.room.message" => {
+                    let message_pdu: MessagePDU = serde_json::from_str(self.blob.get()).unwrap();
+                    format!("{} says \"{}\"", self.pdu.sender, message_pdu.content.body)
                 }
+                _ => format!("{} unknown", self.pdu.sender),
             },
         }
     }
@@ -122,6 +128,15 @@ fn send_signed_request(
 
     Ok(Vec::new())
 
+    // let bytes = ureq::post(uri)
+    //     .set("X-My-Header", "Secret")
+    //     .send_json(json!({
+    //         "name": "martin",
+    //         "rust": true
+    //     }))?
+    //     .into_string()?
+    //     .into_bytes();
+
     /*
     let client = reqwest::blocking::Client::new();
 
@@ -156,7 +171,33 @@ fn send_signed_request(
     */
 }
 
-pub(crate) fn send_request(state: &State) -> Result<(), Box<dyn Error>> {
+#[derive(Deserialize)]
+struct BackfillResponse {
+    pdus: Vec<Box<RawValue>>,
+}
+
+pub(crate) fn send_backfill_request(state: &State) -> Result<(), Box<dyn Error>> {
+    let room_id = Id::<Room>::try_from_str("!jhTIqlwlxKKoPPHIgH:synapse-dev.demi.ro").unwrap();
+    let event_id = "$By7ZDI3wONJDXly1um6f1NqimBdqS_1g3kxeNYjhnBA";
+
+    let uri = format!("/_matrix/federation/v1/backfill/{room_id}?limit=50&v={event_id}");
+    let response: BackfillResponse = SignedRequestBuilder::get(state, &uri)
+        .destination("synapse-dev.demi.ro")
+        .send()?;
+
+    eprintln!("Got {} backfill PDUs.", response.pdus.len());
+    state.with_persistent_mut(|persistent_state| {
+        let room = persistent_state.rooms.get_mut(room_id).unwrap();
+
+        for pdu in response.pdus {
+            room.pdu_blobs.push(pdu.to_string());
+        }
+    });
+
+    Ok(())
+}
+
+pub(crate) fn send_join_request(state: &State) -> Result<(), Box<dyn Error>> {
     // let uri = format!(
     //     "/_matrix/federation/v1/state/{}?eventId={}",
     //     "!jhTIqlwlxKKoPPHIgH:synapse-dev.demi.ro",
@@ -567,7 +608,6 @@ pub(crate) fn ingest_transaction(
     eprintln!("Transaction {transaction_id} from {origin} at {time}:");
 
     for edu in edus {
-
         match parse_edu_ref(edu) {
             Ok(edu_ref) => {
                 eprintln!("* Parsed EDU: {}", edu_ref);

@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    playground::send_request,
+    playground::send_join_request,
     request::{EmptyBody, EmptyQS, GenericRequest, MatrixRequest, RequestData},
 };
 
@@ -31,7 +31,7 @@ pub(super) fn get_admin_send<'r>(
 ) -> Response<'r> {
     let text = request_data.new_str("Hello");
 
-    match send_request(&request_data.state) {
+    match send_join_request(&request_data.state) {
         Ok(value) => value,
         Err(err) => {
             eprintln!("Error: {}", err);

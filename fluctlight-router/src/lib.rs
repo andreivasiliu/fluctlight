@@ -17,6 +17,7 @@ mod request;
 mod routes_admin;
 mod routes_federation;
 mod server_keys;
+mod signed_request;
 mod state;
 
 use cap::Cap;

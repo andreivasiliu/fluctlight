@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    playground::{load_join_event, load_room},
+    playground::{load_join_event, load_room, send_backfill_request},
     request::{EmptyBody, EmptyQS, GenericRequest, MatrixRequest, RequestData},
 };
 
@@ -36,14 +36,18 @@ pub(super) fn get_admin_load<'r>(
         load_join_event().unwrap();
     }
 
-    println!("Usage before: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
-    match load_room(&request_data.state) {
-        Ok(value) => value,
-        Err(err) => {
-            eprintln!("Error: {}", err);
-        }
-    };
-    println!("Usage after: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
+    // println!("Usage before: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
+    // match load_room(&request_data.state) {
+    //     Ok(value) => value,
+    //     Err(err) => {
+    //         eprintln!("Error: {}", err);
+    //     }
+    // };
+    // println!("Usage after: {}MB", crate::ALLOCATOR.allocated() / 1024 / 1024);
+
+    if let Err(err) = send_backfill_request(request_data.state) {
+        eprintln!("Error: {}", err);
+    }
 
     Response { text }
 }

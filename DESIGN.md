@@ -93,7 +93,31 @@ Data structures:
   * Therefore, they are stable array indexes
   * The individual cells still need a history of modifications
   * Iteration would be O(n), lookup would be mostly O(1)
-* Idea: Perhaps something with globally unique state branch ID
+* Idea: Perhaps something with globally unique state branch IDs
+* Idea: State map is an array, each node holds branch extremities
+  * Extremities hold a past-going linked list of dates and values
+  * New extremity added when this key is modified on a branch
+    * Conversely, if this key was not modified, the branch is skipped
+  * Merged branches inherit the longest branch's name
+  * Branch points include a replay of each short branch's history
+  * Extremities can be reordered to make the main branch be the first
+  * This perhaps models a tiny subset replica of the entire state graph
+    * Except that branches are never merged, and remain an extremity
+  * Use a[depth].b[depth].c branch names in case b or c are not there
+    * Or have a map of branches to their branch source
+
+Queries an event/state must support:
+* Backfill over federation
+  * Was the room visibility public at this state
+  * Was any user of the request server joined at this state
+    * Alternatively: did the server have any users joined at this state
+* Normal operations
+  * Was the sender joined at this state
+* Relay presence/typing EDUs
+  * None (only needs the room's latest state)
+* Relay join event
+  * What servers have a user joined at this state
+  * Might also work to just record this state
 
 Flows:
 * Client asks to join over federation
@@ -164,6 +188,7 @@ PDU disk storage:
   * JSON stream of individual PDUs
   * Separate index with pointers to file and start/end offsets
   * Separate map with event_id to index
+  * Restart zlib/deflate compression for each PDU with preset dictionary
 * Would be nice to store:
   * The original PDU
   * The origin and time it was received
