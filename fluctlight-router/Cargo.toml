@@ -2,10 +2,14 @@
 name = "fluctlight-router"
 version = "0.1.0-alpha.8"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Andrei Vasiliu <whyte.vuhuni@gmail.com>"]
+description = "Fluctlight Matrix federation logic module"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
+name = "fluctlight_router"
 crate-type = ["cdylib"]
 
 [dependencies]

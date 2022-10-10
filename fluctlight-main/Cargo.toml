@@ -2,8 +2,14 @@
 name = "fluctlight-main"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Andrei Vasiliu <whyte.vuhuni@gmail.com>"]
+description = "Fluctlight Matrix federation network server"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[package.metadata.deb]
+depends = "$auto, fluctlight-router (= 0.1.0~alpha.8)"
 
 [dependencies]
 fluctlight-mod-interface = { path = "../fluctlight-mod-interface" }

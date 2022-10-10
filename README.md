@@ -50,3 +50,7 @@ Currently implemented:
 For planned features, see [DESIGN.md](./DESIGN.md).
 
 [Askama]: https://lib.rs/crates/askama
+
+## License
+
+The code is dual-licensed under either Apache-2.0 or MIT.
