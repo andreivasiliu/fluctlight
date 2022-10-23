@@ -1,6 +1,6 @@
 use std::panic::catch_unwind;
 
-use fluctlight_mod_interface::{ModuleState, OpaqueModuleState, Request, ResponseResult};
+use fluctlight_mod_interface::{ModuleState, OpaqueModuleState, Request, ResponseResult, Response};
 
 mod canonical_hash;
 mod edu_ref;
@@ -28,7 +28,7 @@ static ALLOCATOR: Cap<std::alloc::System> = Cap::new(std::alloc::System, usize::
 
 #[no_mangle]
 pub extern "C" fn process_request<'a>(request: Request<'a>) -> ResponseResult {
-    eprintln!("Hello: {}", request.uri());
+    eprintln!("{} {}", request.method(), request.uri());
 
     let response = catch_unwind(|| {
         let state_box = &request.module_state().state;
@@ -39,10 +39,23 @@ pub extern "C" fn process_request<'a>(request: Request<'a>) -> ResponseResult {
         request::try_process_request(state, request)
     });
 
-    response
-        .map_err(|_err| "Handler panicked".to_string())
-        .and_then(|response| response)
-        .into()
+    let response = match response {
+        Ok(response) => response,
+        Err(_panic_payload) => {
+            Response::new(
+                500,
+                "text/plain",
+                "Internal server error (request handler panicked)".as_bytes().into(),
+            )
+        },
+    };
+
+    if response.status() != 200 {
+        eprintln!("Response: {}", response.status());
+    }
+
+    // TODO: Ok() and ResponseResult might no longer be needed
+    Ok(response).into()
 }
 
 #[no_mangle]

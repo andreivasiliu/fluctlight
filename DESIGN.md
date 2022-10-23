@@ -49,6 +49,7 @@ Memory shenanigans:
 * ouroboros: a PDU's RawValue plus deserialized PDU referencing it
 * append-only-vec: can append with shared reference
 * IntStr/ArcStr combo: best of both worlds
+* im: immutable data structures
 
 Logic core, IO shell:
 * Everything in the module must not be async
@@ -201,3 +202,20 @@ PDU disk storage:
   * State events or state merging events
   * Normal events
 
+Road to a public federation listener:
+* Must correctly answer key requests
+  * Timestamp must be calculated and cached
+* Must check with homeserver devs if plain/text 501s are acceptable
+* Must join only v5/v6 rooms
+  * May implement runtime check when redacting
+* Should figure out PDU storage
+  * May index and skip loading non-state PDUs
+* Must track PDU origin
+* Must perform new join experiment
+* Must figure out packaging and deployment
+* Should fix event ID calculation
+* May implement redaction (this could allow public read-only access)
+* May implement profile and device list query APIs
+* Should set display name on the join event
+* Should display memory usage
+* Should be able to drop non-state PDUs from memory

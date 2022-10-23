@@ -8,7 +8,18 @@
     <h1>Fluctlight</h1>
     <p>Persistent store rooms: {{ state.persistent().rooms.len() }}.</p>
 
-    <p>Controls: <a href="/admin/load">load room</a></p>
+    <p>
+        Controls:
+        <a href="/admin/load">load room</a>,
+        <a href="/admin/send">send join request</a>,
+        <a href="/admin/backfill">send backfill request</a>
+    </p>
+
+    {% if memory_usage > 1024 * 1024 %}
+    <p>Memory usage: <code>{{ memory_usage / 1024 / 1024 }}</code> mega-bytes</p>
+    {% else %}
+    <p>Memory usage: <code>{{ memory_usage }}</code> bytes</p>
+    {% endif %}
 
     <h3>Persistent rooms:</h3>
     {% if state.persistent().rooms.is_empty() %}

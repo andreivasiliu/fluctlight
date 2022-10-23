@@ -147,6 +147,10 @@ impl Response {
     pub fn new(status: u16, content_type: &'static str, body: Cow<'static, [u8]>) -> Self {
         (status, content_type, body).into()
     }
+
+    pub fn status(&self) -> u16 {
+        self.status
+    }
 }
 
 impl ResponseResult {

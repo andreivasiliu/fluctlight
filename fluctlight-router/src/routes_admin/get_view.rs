@@ -25,6 +25,7 @@ pub(super) struct RequestPath<'a> {
 #[template(path = "view.html")]
 pub(super) struct Response<'a> {
     state: &'a State,
+    memory_usage: usize,
 }
 
 pub(super) fn get_admin_view<'r>(
@@ -33,5 +34,6 @@ pub(super) fn get_admin_view<'r>(
 ) -> Response<'r> {
     Response {
         state: request_data.state,
+        memory_usage: crate::ALLOCATOR.allocated(),
     }
 }

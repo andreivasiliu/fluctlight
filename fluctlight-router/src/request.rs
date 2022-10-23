@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use askama::Template;
 use bumpalo::{collections::CollectIn, Bump};
 use fluctlight_mod_interface::{Request, Response};
@@ -136,7 +138,7 @@ impl<'r> RequestData<'r> {
 pub(super) fn try_process_request<'a>(
     state: &State,
     request: Request<'a>,
-) -> Result<Response, String> {
+) -> Response {
     let mut uri_segments: SmallVec<[&str; 8]> = request.uri().split('/').collect();
     uri_segments[0] = request.method();
 
@@ -172,11 +174,11 @@ pub(super) fn try_process_request<'a>(
     } else if let Some(http_response) = admin_api_handler(uri_segments.as_slice(), &request_data) {
         http_response
     } else {
-        return Ok(Response::new(
+        return Response::new(
             404,
             "text/plain",
             b"Not found\n".as_slice().into(),
-        ));
+        );
     };
 
     if let Err(err) = &http_response {
@@ -192,8 +194,17 @@ pub(super) fn try_process_request<'a>(
         );
     }
 
-    let http_response =
-        http_response.map_err(|err| format!("Could not process request: {}", err))?;
+    let http_response = match http_response {
+        Ok(response) => response,
+        Err(err) => {
+            let err = format!("Could not process request: {}", err);
+            return Response::new(
+                500,
+                "text/plain",
+                Cow::Owned(err.into_bytes()),
+            );
+        },
+    };
 
     log_network_response(log_index, &http_response, "in");
 
@@ -207,11 +218,11 @@ pub(super) fn try_process_request<'a>(
         Some(_) | None => "text/plain",
     };
 
-    return Ok(Response::new(
-        200,
+    return Response::new(
+        http_response.status().as_u16(),
         content_type,
         http_response.into_body().into(),
-    ));
+    );
 }
 
 pub(crate) struct GenericRequest<Path, QueryString, Body> {

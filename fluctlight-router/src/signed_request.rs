@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::Serialize;
 use serde_json::value::{to_raw_value, RawValue};
 
 use crate::state::State;
@@ -27,12 +27,25 @@ pub(crate) struct SignedRequestBuilder<'a> {
 // Maybe have signed_get and signed_post functions?
 // signed_post(state, "/abc", destination, value)
 // That's also awful. Need a better idea here.
+// Either way this module doesn't belong in this library.
 impl<'a> SignedRequestBuilder<'a> {
     pub(crate) fn get(state: &'a State, uri: &'a str) -> Self {
         let origin = state.server_name.as_str();
 
         SignedRequestBuilder {
             method: "GET",
+            state,
+            origin,
+            uri,
+            destination: None,
+        }
+    }
+
+    pub(crate) fn put(state: &'a State, uri: &'a str) -> Self {
+        let origin = state.server_name.as_str();
+
+        SignedRequestBuilder {
+            method: "PUT",
             state,
             origin,
             uri,
@@ -47,7 +60,7 @@ impl<'a> SignedRequestBuilder<'a> {
         }
     }
 
-    pub(crate) fn send<R: DeserializeOwned>(self) -> Result<R, Box<dyn Error>> {
+    pub(crate) fn send(self) -> Result<Vec<u8>, Box<dyn Error>> {
         let signed_json = SignedJson {
             content: None,
             destination: self.destination.expect("Destination must be set"),
@@ -56,29 +69,25 @@ impl<'a> SignedRequestBuilder<'a> {
             uri: self.uri,
         };
 
-        let url = format!(
-            "http://{}:8008{}", signed_json.destination, self.uri,
-        );
+        let url = format!("http://{}:8008{}", signed_json.destination, self.uri,);
 
-        let req = match self.method {
+        let mut req = match self.method {
             "GET" => ureq::get(&url),
             "POST" => ureq::post(&url),
             method => panic!("Unknown method {}", method),
         };
 
-        let signature = signature(self.state, &signed_json);
-        let req = req.set("Authorization", &signature);
+        req = sign(req, self.state, &signed_json);
 
         let response = req.call()?;
+        let mut bytes = Vec::new();
+        response.into_reader().read_to_end(&mut bytes)?;
 
-        Ok(serde_json::from_reader(response.into_reader())?)
+        Ok(bytes)
     }
 
-    pub(crate) fn send_body<T: Serialize, R: DeserializeOwned>(
-        self,
-        body: &T,
-    ) -> Result<R, Box<dyn Error>> {
-        let req = match self.method {
+    pub(crate) fn send_body<T: Serialize>(self, body: &T) -> Result<Vec<u8>, Box<dyn Error>> {
+        let mut req = match self.method {
             "GET" => ureq::get(self.uri),
             "POST" => ureq::post(self.uri),
             method => panic!("Unknown method {}", method),
@@ -94,33 +103,37 @@ impl<'a> SignedRequestBuilder<'a> {
             uri: self.uri,
         };
 
-        let signature = signature(self.state, &signed_json);
-        let req = req.set("Authorization", &signature);
+        req = sign(req, self.state, &signed_json);
 
         let response = req.send_bytes(content.get().as_bytes())?;
+        let mut bytes = Vec::new();
+        response.into_reader().read_to_end(&mut bytes)?;
 
-        Ok(serde_json::from_reader(response.into_reader())?)
+        Ok(bytes)
     }
 }
 
-fn signature(state: &State, signed_json: &SignedJson) -> String {
+fn sign(mut req: ureq::Request, state: &State, signed_json: &SignedJson) -> ureq::Request {
     // TODO: Check if sending directly to a hasher helps
     let signable_bytes = serde_json::to_vec(&signed_json).unwrap();
 
-    eprintln!("Signing signable:\n---\n{}\n---\n", String::from_utf8_lossy(&signable_bytes));
-
-    let server_key = state.server_key_pairs.iter().next().unwrap();
-    let (key_name, server_key_pair) = server_key;
-
-    let noise = None;
-    let signature = server_key_pair.key_pair.sk.sign(&signable_bytes, noise);
-    let sig_b64 = base64::encode_config(&*signature, base64::STANDARD_NO_PAD);
-
-    let sig = format!(
-        "X-Matrix origin={},key=\"{}\",sig=\"{}\"",
-        state.server_name, key_name, sig_b64
+    eprintln!(
+        "Signing signable:\n---\n{}\n---\n",
+        String::from_utf8_lossy(&signable_bytes)
     );
 
-    eprintln!("Signature: {}", sig);
-    sig
+    for (key_name, server_key) in &state.server_key_pairs {
+        let noise = None;
+        let signature = server_key.key_pair.sk.sign(&signable_bytes, noise);
+        let sig_b64 = base64::encode_config(&*signature, base64::STANDARD_NO_PAD);
+
+        let header = format!(
+            "X-Matrix origin={},key=\"{}\",sig=\"{}\"",
+            state.server_name, key_name, sig_b64
+        );
+
+        req = req.set("Authorization", &header);
+    }
+
+    req
 }

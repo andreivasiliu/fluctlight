@@ -1,22 +1,20 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
-    io::Write,
 };
 
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, value::RawValue, Value};
-use vec_collections::VecMap1;
+use serde::Deserialize;
+use serde_json::{value::RawValue, Value};
 
 use crate::{
     canonical_hash::verify_content_hash,
     edu_ref::parse_edu_ref,
     interner::{ArcStr, Interner},
-    matrix_types::{Event, Id, Key, Room},
+    matrix_types::{Event, Id, Room, ServerName},
     pdu_arc::{AnyContent, PDUArc},
-    pdu_owned::{parse_pdu, MakeJoinResponse, SendJoinResponse},
-    pdu_ref::{parse_pdu_ref, AnyContentRef, PDURef},
+    pdu_owned::{MakeJoinResponse, SendJoinResponse},
+    pdu_ref::{parse_pdu_ref, AnyContentRef, PDURef, PDUContentType},
     persistence::{PDUBlob, RoomPersistence},
     server_keys::{EventHashable, Hashable, Signable, Verifiable},
     signed_request::SignedRequestBuilder,
@@ -26,6 +24,7 @@ use crate::{
 pub(crate) struct ParsedPDU {
     pub event_id: Box<Id<Event>>,
     pub arc_event_id: Option<ArcStr<Id<Event>>>,
+    pub real_origin: Option<ArcStr<Id<ServerName>>>,
     pub pdu: PDUArc,
     pub blob: Box<RawValue>,
     pub signature_check: Option<Result<(), &'static str>>,
@@ -86,91 +85,6 @@ struct MessageContent<'a> {
     body: &'a str,
 }
 
-fn send_signed_request(
-    uri: String,
-    content: Option<&RawValue>,
-    state: &State,
-) -> Result<Vec<u8>, Box<dyn Error>> {
-    let json = if let Some(content) = content {
-        json!({
-            "content": content,
-            "destination": "synapse-dev.demi.ro",
-            "method": "PUT",
-            "origin": "fluctlight-dev.demi.ro",
-            "uri": uri,
-        })
-    } else {
-        json!({
-            "destination": "synapse-dev.demi.ro",
-            "method": "GET",
-            "origin": "fluctlight-dev.demi.ro",
-            "uri": uri,
-        })
-    };
-
-    // FIXME: Use signable trait
-    let signable_bytes = serde_json::to_vec(&json).unwrap();
-
-    eprintln!(
-        "Signing request: \n---\n{}\n---\n",
-        String::from_utf8_lossy(&signable_bytes)
-    );
-
-    let mut server_signatures: VecMap1<Box<Id<Key>>, String> = VecMap1::empty();
-
-    for (key_name, server_key) in &state.server_key_pairs {
-        let noise = None;
-        let signature = server_key.key_pair.sk.sign(&signable_bytes, noise);
-        let sig_b64 = base64::encode_config(&*signature, base64::STANDARD_NO_PAD);
-
-        server_signatures.insert(key_name.clone(), sig_b64);
-    }
-
-    Ok(Vec::new())
-
-    // let bytes = ureq::post(uri)
-    //     .set("X-My-Header", "Secret")
-    //     .send_json(json!({
-    //         "name": "martin",
-    //         "rust": true
-    //     }))?
-    //     .into_string()?
-    //     .into_bytes();
-
-    /*
-    let client = reqwest::blocking::Client::new();
-
-    let url = format!("https://synapse-dev.demi.ro{}", uri);
-    let mut request = if let Some(content) = content {
-        client.put(url).body(content.get().as_bytes().to_vec())
-    } else {
-        client.get(url)
-    };
-
-    for (key_name, signature) in server_signatures {
-        request = request.header(
-            "Authorization",
-            format!(
-                "X-Matrix origin={},key=\"{}\",sig=\"{}\"",
-                state.server_name, key_name, signature
-            ),
-        );
-    }
-
-    eprintln!("Request: {:?}", request);
-
-    let response = request.send();
-
-    eprintln!("Response: {:?}", response);
-
-    let bytes = response?.bytes().unwrap();
-
-    eprintln!("Response bytes: {}", String::from_utf8_lossy(&*bytes));
-
-    Ok(bytes.to_vec())
-    */
-}
-
 #[derive(Deserialize)]
 struct BackfillResponse {
     pdus: Vec<Box<RawValue>>,
@@ -181,9 +95,10 @@ pub(crate) fn send_backfill_request(state: &State) -> Result<(), Box<dyn Error>>
     let event_id = "$By7ZDI3wONJDXly1um6f1NqimBdqS_1g3kxeNYjhnBA";
 
     let uri = format!("/_matrix/federation/v1/backfill/{room_id}?limit=50&v={event_id}");
-    let response: BackfillResponse = SignedRequestBuilder::get(state, &uri)
+    let response_bytes = SignedRequestBuilder::get(state, &uri)
         .destination("synapse-dev.demi.ro")
         .send()?;
+    let response: BackfillResponse = serde_json::from_slice(&response_bytes)?;
 
     eprintln!("Got {} backfill PDUs.", response.pdus.len());
     state.with_persistent_mut(|persistent_state| {
@@ -208,11 +123,16 @@ pub(crate) fn send_join_request(state: &State) -> Result<(), Box<dyn Error>> {
         "!jhTIqlwlxKKoPPHIgH:synapse-dev.demi.ro", "@whyte:fluctlight-dev.demi.ro",
     );
 
-    let make_join_response_bytes = send_signed_request(uri, None, state)?;
+    let response_bytes = SignedRequestBuilder::get(state, &uri)
+        .destination("fluctlight-dev.demi.ro")
+        .send()?;
+    let response: MakeJoinResponse = serde_json::from_slice(&response_bytes)?;
 
-    let make_join_response: MakeJoinResponse = serde_json::from_slice(&*make_join_response_bytes)?;
+    // let make_join_response_bytes = send_signed_request(uri, None, state)?;
 
-    let mut join_template = make_join_response.event;
+    // let make_join_response: MakeJoinResponse = serde_json::from_slice(&*make_join_response_bytes)?;
+
+    let mut join_template = response.event;
 
     eprintln!("PDU: {:?}", join_template);
 
@@ -229,18 +149,14 @@ pub(crate) fn send_join_request(state: &State) -> Result<(), Box<dyn Error>> {
     // The spec requires this to be missing when transferred over federation
     // let event_id = join_template.event_id.take().unwrap();
 
-    let bytes = serde_json::to_vec(&join_template)?;
-
-    eprintln!("Template: {}", String::from_utf8_lossy(&bytes));
-
-    let raw_value: &RawValue = serde_json::from_slice(&bytes)?;
-
     let uri = format!(
         "/_matrix/federation/v2/send_join/{}/{}",
         "!jhTIqlwlxKKoPPHIgH:synapse-dev.demi.ro", event_id,
     );
 
-    let send_join_response_bytes = send_signed_request(uri, Some(raw_value), state)?;
+    let send_join_response_bytes = SignedRequestBuilder::put(state, &uri)
+        .destination("synapse-dev.demi.ro")
+        .send_body(&join_template)?;
 
     eprintln!(
         "Join response: {}",
@@ -300,9 +216,13 @@ pub(crate) fn load_join_event() -> Result<(), Box<dyn Error>> {
         let pdu_ref = parse_pdu_ref(event)?;
         let event_id = pdu_ref.generate_event_id();
         let pdu_arc = PDUArc::from_pdu_ref(&pdu_ref, &mut interner);
+        // Note: this origin may be missing, and be forever lost, according to:
+        // https://github.com/matrix-org/matrix-spec/issues/374#issuecomment-1276072011
+        let real_origin = pdu_arc.origin.clone();
         let parsed_pdu = ParsedPDU {
             event_id: event_id,
             arc_event_id: None,
+            real_origin,
             pdu: pdu_arc,
             blob: event.to_owned(),
             signature_check: None,
@@ -321,18 +241,15 @@ pub(crate) fn load_join_event() -> Result<(), Box<dyn Error>> {
         RoomPersistence::new(room_path).expect("Could not open room persistence");
 
     for parsed_pdu in &pdus {
-        let pdu_blob = PDUBlob {
-            event_id: &parsed_pdu.event_id,
-            pdu_blob: &parsed_pdu.blob,
-        };
-
-        serde_json::to_writer(room_persistence.state_pdu_file(), &pdu_blob)
-            .expect("Could not write to persistent room storage");
+        // TODO: Is this correct handling of missing origins?
+        // Or perhaps should assert instead?
+        let real_origin = parsed_pdu.real_origin
+            .as_ref()
+            .map(|origin| origin.as_id());
+        room_persistence
+            .state_pdu_file
+            .write_pdu(&parsed_pdu.event_id, real_origin, &parsed_pdu.blob);
     }
-    room_persistence
-        .state_pdu_file()
-        .flush()
-        .expect("Could not flush room persistence store");
     drop(room_persistence);
     timer.stop("persist events");
 
@@ -354,7 +271,7 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
     timer.start("reloading events");
     let mut room_persistence = RoomPersistence::new("db.room.matrix_hq").unwrap();
 
-    let pdu_bytes = room_persistence.read_state_pdu_file()?;
+    let pdu_bytes = room_persistence.state_pdu_file.read_contents()?;
     timer.stop("reloading events");
 
     eprintln!("Reparsing events from disk...");
@@ -427,6 +344,7 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
         pdus.push(ParsedPDU {
             event_id: partial_pdu.event_id,
             arc_event_id: None,
+            real_origin: None,  // FIXME
             pdu: pdu_arc,
             blob: partial_pdu.pdu_blob,
             signature_check: Some(partial_pdu.signature_check),
@@ -543,6 +461,7 @@ pub(crate) fn load_persistent_rooms(state: &crate::state::State) {
 
 pub(crate) fn load_persistent_room(state: &crate::state::State, room_id: &Id<Room>) {
     let mut pdu_blobs = Vec::new();
+    let mut room_db = None;
 
     state.with_persistent_mut(|persistent_state| {
         let room = persistent_state.rooms.get(room_id).unwrap();
@@ -551,24 +470,53 @@ pub(crate) fn load_persistent_room(state: &crate::state::State, room_id: &Id<Roo
             let pdu_blob: Box<RawValue> = serde_json::from_str(pdu_blob).unwrap();
             pdu_blobs.push(pdu_blob);
         }
+
+        room_db = room.room_db.clone();
     });
 
+    let mut room_persistence = None;
+
+    if let Some(room_db) = room_db {
+        room_persistence = Some(RoomPersistence::new(room_db).unwrap());
+    }
+
+    let mut state_pdu_count = 0;
+    let mut other_pdu_count = 0;
+
+    if let Some(room_persistence) = &mut room_persistence {
+        room_persistence.state_pdu_file.read_pdus(|pdu_blob| {
+            pdu_blobs.push(pdu_blob.pdu_blob.to_owned());
+            state_pdu_count += 1;
+        });
+
+        room_persistence.other_pdu_file.read_pdus(|pdu_blob| {
+            pdu_blobs.push(pdu_blob.pdu_blob.to_owned());
+            other_pdu_count += 1;
+        });
+    }
+
+    eprintln!("Loaded PDUs: {state_pdu_count} (state), {other_pdu_count} (other)");
+
     state.with_ephemeral_mut(|ephemeral_state| {
+        let room = ephemeral_state.rooms.entry(room_id.to_owned()).or_default();
+        let interner = &mut room.interner;
+
+        room.room_persistence = room_persistence;
+
         for pdu_blob in pdu_blobs {
             let pdu_ref = parse_pdu_ref(&pdu_blob).unwrap();
             let event_id = pdu_ref.generate_event_id();
+
+            if pdu_ref.room_id != room_id {
+                eprintln!("Warning: PDU {event_id} is not in room {room_id}");
+                continue;
+            }
 
             let signatures = pdu_ref.signatures.as_ref().unwrap();
             let sender_name = pdu_ref.sender.server_name();
 
             let signature_check = pdu_ref.verify(state, sender_name, signatures);
             let hash_check = verify_content_hash(pdu_blob.get(), false);
-
-            let room = ephemeral_state
-                .rooms
-                .entry(pdu_ref.room_id.to_owned())
-                .or_default();
-            let interner = &mut room.interner;
 
             let pdu_arc = PDUArc::from_pdu_ref(&pdu_ref, interner);
             let arc_event_id = interner.get_or_insert(event_id.as_id());
@@ -578,6 +526,7 @@ pub(crate) fn load_persistent_room(state: &crate::state::State, room_id: &Id<Roo
             let parsed_pdu = ParsedPDU {
                 event_id,
                 arc_event_id: Some(arc_event_id.clone()),
+                real_origin: None,  // FIXME
                 pdu: pdu_arc,
                 blob: pdu_blob,
                 signature_check: Some(signature_check),
@@ -619,12 +568,16 @@ pub(crate) fn ingest_transaction(
         }
     }
 
-    for pdu in &pdus {
+    for pdu in pdus {
         eprintln!("* Got PDU: {}", pdu);
 
-        match parse_pdu_ref(pdu) {
-            Ok(pdu_ref) => {
-                parsed_pdus.push((pdu_ref, *pdu));
+        match parse_pdu_ref(&pdu) {
+            Ok(mut pdu_ref) => {
+                if pdu_ref.origin.is_some() && pdu_ref.origin != Some(origin) {
+                    eprintln!("* Warning: Incorrect origin sent over federation: {:?} (real: {})", pdu_ref.origin, origin);
+                }
+                pdu_ref.origin = Some(origin);
+                parsed_pdus.push((pdu_ref, pdu));
             }
             Err(err) => {
                 eprintln!("* Error parsing PDU: {}", err);
@@ -636,37 +589,48 @@ pub(crate) fn ingest_transaction(
 
     state.with_persistent_mut(|persistent_state| {
         for (pdu_ref, pdu_blob) in &parsed_pdus {
-            if pdu_ref.room_id.as_str() == "!jhTIqlwlxKKoPPHIgH:synapse-dev.demi.ro" {
-                let pdu = parse_pdu(pdu_blob);
-
-                match pdu {
-                    Ok(mut pdu) => {
-                        pdu.origin = Some(origin.to_box());
-                        let event_id = pdu.generate_event_id();
-                        eprintln!("* Got persistent super-public room PDU: {event_id}");
-                        let room = persistent_state.rooms.get_mut(pdu.room_id.as_id()).unwrap();
-                        room.pdu_blobs.push(pdu_blob.get().to_owned());
-                    }
-                    Err(err) => {
-                        eprintln!("* Got error in super-public PDU: {err}");
-                    }
+            let event_id = pdu_ref.generate_event_id();
+            if let Some(room) = persistent_state.rooms.get_mut(pdu_ref.room_id.as_id())
+            {
+                if room.room_db.is_none() {
+                    // Warning: this loses the real origin
+                    eprintln!("* Got json-persistent room PDU: {event_id}");
+                    room.pdu_blobs.push(pdu_blob.get().to_owned());
+                } else {
+                    eprintln!("* Got gz-persistent room PDU: {event_id}");
                 }
+            } else {
+                eprintln!(
+                    "* Got PDU in alien room: {event_id} (room {})",
+                    pdu_ref.room_id
+                );
             }
         }
     });
 
     state.with_ephemeral_mut(|ephemeral_state| {
-        for (mut pdu_ref, pdu_blob) in parsed_pdus {
-            pdu_ref.origin = Some(origin);
+        for (pdu_ref, pdu_blob) in parsed_pdus {
             let server_name = pdu_ref.sender.server_name();
             let signatures = pdu_ref.signatures.as_ref().unwrap();
             let signature_check = pdu_ref.verify(state, server_name, signatures);
             let hash_check = verify_content_hash(pdu_blob.get(), false);
+            let event_id = pdu_ref.generate_event_id();
 
             if let Some(room) = ephemeral_state.rooms.get_mut(pdu_ref.room_id) {
+                if let Some(room_persistence) = &mut room.room_persistence {
+                    if AnyContentRef::has_state(&pdu_ref.state_key) {
+                        eprintln!("* Got persisted state PDU: {event_id}");
+                        room_persistence.state_pdu_file.write_pdu(&event_id, Some(origin), pdu_blob);
+                    } else {
+                        eprintln!("* Got persisted non-state PDU: {event_id}");
+                        room_persistence.other_pdu_file.write_pdu(&event_id, Some(origin), pdu_blob);
+                    }
+                } else {
+                    eprintln!("* Got ephemeral PDU: {event_id}");
+                }
+
                 let interner = &mut room.interner;
 
-                let event_id = pdu_ref.generate_event_id();
                 let arc_event_id = interner.get_or_insert(&*event_id);
                 let pdu_arc = PDUArc::from_pdu_ref(&pdu_ref, interner);
 
@@ -681,14 +645,22 @@ pub(crate) fn ingest_transaction(
                 let parsed_pdu = ParsedPDU {
                     event_id: event_id.clone(),
                     arc_event_id: Some(arc_event_id.clone()),
+                    real_origin: Some(interner.get_or_insert(origin)),
                     pdu: pdu_arc,
                     blob: pdu_blob.to_owned(),
                     signature_check: Some(signature_check),
                     hash_check: Some(hash_check),
                 };
 
+                room.pdus_by_timestamp
+                    .insert(parsed_pdu.pdu.origin_server_ts, arc_event_id.clone());
                 room.pdus.insert(arc_event_id, parsed_pdu);
                 pdu_results.insert(event_id, Ok(()));
+            } else {
+                eprintln!(
+                    "* Alien PDU dropped: {event_id} (room {})",
+                    pdu_ref.room_id
+                );
             }
         }
     });

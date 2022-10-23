@@ -13,7 +13,7 @@ use crate::{
     matrix_types::{Event, Id, Key, Room, ServerName},
     playground::ParsedPDU,
     rendered_json::RenderedJson,
-    server_keys::{ServerKeys, VerifyKey},
+    server_keys::{ServerKeys, VerifyKey}, persistence::RoomPersistence,
 };
 
 pub(crate) struct State {
@@ -48,6 +48,7 @@ pub(crate) struct Ephemeral {
 #[derive(Serialize, Deserialize, Default)]
 pub(crate) struct RoomState {
     pub pdu_blobs: Vec<String>,
+    pub room_db: Option<String>,
 }
 
 #[derive(Default)]
@@ -55,6 +56,7 @@ pub(crate) struct EphemeralRoomState {
     pub pdus: BTreeMap<ArcStr<Id<Event>>, ParsedPDU>,
     pub pdus_by_timestamp: BTreeMap<TimeStamp, ArcStr<Id<Event>>>,
     pub interner: Interner,
+    pub room_persistence: Option<RoomPersistence>,
 }
 
 #[derive(Clone)]
