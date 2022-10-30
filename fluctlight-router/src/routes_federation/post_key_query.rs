@@ -72,7 +72,7 @@ pub(super) fn post_key_v2_query<'r>(
 
     for (server_name, key_query) in request.body.server_keys {
         // Ignore the query. The spec says: "The notary server may return
-        // multiple keys egardless of the Key IDs given."
+        // multiple keys regardless of the Key IDs given."
         let _ = key_query;
 
         if let Some(foreign_server_keys_json_list) =

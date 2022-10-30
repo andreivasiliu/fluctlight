@@ -11,7 +11,7 @@ use crate::{
     state::{ServerKeyPair, State, TimeStamp},
 };
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct ServerKeys {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub old_verify_keys: Option<BTreeMap<Box<Id<Key>>, OldVerifyKey>>,
@@ -23,18 +23,18 @@ pub(crate) struct ServerKeys {
     pub verify_keys: BTreeMap<Box<Id<Key>>, VerifyKey>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct OldVerifyKey {
     pub expired_ts: TimeStamp,
     pub key: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct VerifyKey {
     pub key: String,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
 #[serde(transparent)]
 pub(crate) struct Signatures {
     pub signatures: BTreeMap<Box<Id<ServerName>>, BTreeMap<Box<Id<Key>>, String>>,

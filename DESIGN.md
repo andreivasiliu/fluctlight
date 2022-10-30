@@ -204,7 +204,8 @@ PDU disk storage:
 
 Road to a public federation listener:
 * Must correctly answer key requests
-  * Timestamp must be calculated and cached
+  * Must check against local Synapse
+  * Must check against federation tester
 * Must check with homeserver devs if plain/text 501s are acceptable
 * Must join only v5/v6 rooms
   * May implement runtime check when redacting
@@ -219,3 +220,4 @@ Road to a public federation listener:
 * Should set display name on the join event
 * Should display memory usage
 * Should be able to drop non-state PDUs from memory
+* Must rename key to have Fluctlight-specific prefix

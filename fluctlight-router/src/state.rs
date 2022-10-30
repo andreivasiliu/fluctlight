@@ -2,18 +2,20 @@ use std::{
     collections::BTreeMap,
     io::Write,
     sync::{RwLock, RwLockReadGuard},
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
 
 use ed25519_compact::{KeyPair, PublicKey};
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 
 use crate::{
     interner::{ArcStr, Interner},
     matrix_types::{Event, Id, Key, Room, ServerName},
+    persistence::RoomPersistence,
     playground::ParsedPDU,
     rendered_json::RenderedJson,
-    server_keys::{ServerKeys, VerifyKey}, persistence::RoomPersistence,
+    server_keys::{ServerKeys, VerifyKey},
 };
 
 pub(crate) struct State {
@@ -36,6 +38,8 @@ pub(crate) struct Persistent {
 
 // TODO: Same as above, but even quicker, and even dirtier
 pub(crate) struct Ephemeral {
+    pub own_server_keys: ServerKeys,
+    pub rendered_server_keys: Box<RawValue>,
     pub rooms: BTreeMap<Box<Id<Room>>, EphemeralRoomState>,
 }
 
@@ -63,14 +67,12 @@ pub(crate) struct EphemeralRoomState {
 pub(crate) struct ServerKeyPair {
     pub public_key_base64: String,
     pub key_pair: KeyPair,
-    pub valid_until: TimeStamp,
 }
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct ServerKeyPairBase64 {
     pub public_key_base64: String,
     pub key_pair_base64: String,
-    pub valid_until: TimeStamp,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -78,15 +80,27 @@ pub(crate) struct ServerKeyPairBase64 {
 pub(crate) struct TimeStamp(u128);
 
 impl TimeStamp {
-    pub fn one_week_from_now() -> Self {
+    pub fn one_week_from_today() -> Self {
+        let today = TimeStamp::today();
+        TimeStamp(today.0 + 1000 * 60 * 60 * 24 * 7)
+    }
+
+    pub fn six_days_from_today() -> Self {
+        let today = TimeStamp::today();
+        TimeStamp(today.0 + 1000 * 60 * 60 * 24 * 6)
+    }
+
+    pub fn today() -> Self {
         let now = SystemTime::now();
-        TimeStamp(
-            now.checked_add(Duration::from_secs(60 * 60 * 24 * 7))
-                .expect("Should always be in range")
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("Should always be positive")
-                .as_millis(),
-        )
+        let millis_now = now
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Should always be positive")
+            .as_millis();
+
+        let one_day = 1000 * 60 * 60 * 24;
+        let millis_today = (millis_now / one_day) * one_day;
+
+        TimeStamp(millis_today)
     }
 
     pub fn now() -> Self {
@@ -119,27 +133,24 @@ impl State {
             verify_keys.insert(key_name.clone(), verify_key);
         }
 
-        let valid_until_ts = server_key_pairs
-            .values()
-            .map(|server_key| server_key.valid_until)
-            .min_by_key(|timestamp| timestamp.as_millis())
-            .expect("Server should always have at least one key");
+        let valid_until_ts = TimeStamp::one_week_from_today();
 
-        let mut server_keys = ServerKeys {
+        let mut own_server_keys = ServerKeys {
             old_verify_keys: None,
             server_name: server_name.clone(),
             signatures: None,
             valid_until_ts: Some(valid_until_ts),
             verify_keys,
         };
-        server_keys.sign(&server_name, &server_key_pairs);
+        own_server_keys.sign(&server_name, &server_key_pairs);
 
         let mut foreign_server_keys_json = BTreeMap::new();
         let mut foreign_server_keys = BTreeMap::new();
-        let rendered_json =
-            RenderedJson::from_trusted(serde_json::to_string(&server_keys).expect("Valid JSON"));
+        let rendered_json = RenderedJson::from_trusted(
+            serde_json::to_string(&own_server_keys).expect("Valid JSON"),
+        );
         foreign_server_keys_json.insert(server_name.clone(), vec![rendered_json]);
-        foreign_server_keys.insert(server_name, vec![server_keys]);
+        foreign_server_keys.insert(server_name, vec![own_server_keys.clone()]);
 
         foreign_server_keys.extend(load_foreign_keys());
 
@@ -162,9 +173,14 @@ impl State {
             }
         }
 
+        let rendered_server_keys: Box<RawValue> = serde_json::value::to_raw_value(&own_server_keys)
+            .expect("Serialization should always succeed");
+
         let persistent = Persistent::load();
         let ephemeral = Ephemeral {
             rooms: BTreeMap::new(),
+            own_server_keys,
+            rendered_server_keys,
         };
 
         State {
@@ -287,7 +303,6 @@ fn save_server_key_pairs(key_pairs: BTreeMap<Box<Id<Key>>, ServerKeyPair>) {
                 ServerKeyPairBase64 {
                     public_key_base64: key_pair.public_key_base64,
                     key_pair_base64: base64::encode(&*key_pair.key_pair),
-                    valid_until: key_pair.valid_until,
                 },
             )
         })
@@ -324,7 +339,6 @@ fn load_server_key_pairs() -> BTreeMap<Box<Id<Key>>, ServerKeyPair> {
                         &base64::decode(key_pair.key_pair_base64).unwrap(),
                     )
                     .unwrap(),
-                    valid_until: key_pair.valid_until,
                 },
             )
         })
@@ -349,7 +363,6 @@ fn generate_server_key_pairs() -> BTreeMap<Box<Id<Key>>, ServerKeyPair> {
     let server_key_pair = ServerKeyPair {
         public_key_base64: public_key_base64.clone(),
         key_pair,
-        valid_until: TimeStamp::one_week_from_now(),
     };
 
     let mut server_key_pairs = BTreeMap::new();
@@ -366,4 +379,31 @@ fn load_foreign_keys() -> BTreeMap<Box<Id<ServerName>>, Vec<ServerKeys>> {
     // FIXME: fix unwraps
     let key_file = std::fs::File::open("foreign_keys.json").unwrap();
     serde_json::from_reader(key_file).unwrap()
+}
+
+impl State {
+    pub(crate) fn render_own_server_keys(&self) -> Box<RawValue> {
+        // FIXME: Use read-only rwlock when regeneration is not necesarry
+        self.with_ephemeral_mut(|ephemeral_state| {
+            let valid_until = ephemeral_state
+                .own_server_keys
+                .valid_until_ts
+                .expect("Own keys should always have a timestamp");
+
+            // Make it always be at least six days in the future
+            if valid_until.0 <= TimeStamp::six_days_from_today().0 {
+                eprintln!("Re-rendering server keys");
+                ephemeral_state.own_server_keys.valid_until_ts =
+                    Some(TimeStamp::one_week_from_today());
+                ephemeral_state
+                    .own_server_keys
+                    .sign(&self.server_name, &self.server_key_pairs);
+                ephemeral_state.rendered_server_keys =
+                    serde_json::value::to_raw_value(&ephemeral_state.own_server_keys)
+                        .expect("Serialization should always succeed");
+            }
+
+            ephemeral_state.rendered_server_keys.clone()
+        })
+    }
 }
