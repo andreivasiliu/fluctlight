@@ -128,7 +128,12 @@ struct SendJoinResponse<'a> {
 }
 
 pub(crate) fn send_join_request(state: &State) -> Result<(), Box<dyn Error>> {
-    let room_id = Id::<Room>::try_from_str("!jhTIqlwlxKKoPPHIgH:synapse-dev.demi.ro").unwrap();
+    // let room_id = Id::<Room>::try_from_str("!jhTIqlwlxKKoPPHIgH:synapse-dev.demi.ro").unwrap();
+    // let foreign_server_name = room_id.server_name();
+    // let user_id = Id::<User>::try_from_str("@whyte:fluctlight-dev.demi.ro").unwrap();
+    // let room_version = 6;
+
+    let room_id = Id::<Room>::try_from_str("!MmYfpbopGTdEQTHqlr:matrix.org").unwrap();
     let foreign_server_name = room_id.server_name();
     let user_id = Id::<User>::try_from_str("@whyte:fluctlight-dev.demi.ro").unwrap();
     let room_version = 6;

@@ -355,7 +355,7 @@ fn generate_server_key_pairs() -> BTreeMap<Box<Id<Key>>, ServerKeyPair> {
         .filter(|&c| c != '/' && c != '+')
         .take(6)
         .collect::<String>();
-    let server_key_name = format!("ed25519:{}", name_suffix);
+    let server_key_name = format!("ed25519:fl_{}", name_suffix);
 
     let server_key_name =
         Id::<Key>::try_boxed_from_str(&server_key_name).expect("Key format is valid");

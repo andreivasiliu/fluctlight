@@ -203,18 +203,12 @@ PDU disk storage:
   * Normal events
 
 Road to a public federation listener:
-* Must correctly answer key requests
-  * Must check against local Synapse
-  * Must check against federation tester
 * Must check with homeserver devs if plain/text 501s are acceptable
 * Must join only v5/v6 rooms
   * May implement runtime check when redacting
 * Should figure out PDU storage
   * May index and skip loading non-state PDUs
-* Must perform new join experiment
-  * Should set display name on the join event
-* Must figure out packaging and deployment
+* Should set display name on the join event
 * May implement redaction (this could allow public read-only access)
 * May implement profile and device list query APIs
 * Should be able to drop non-state PDUs from memory
-* Must rename key to have Fluctlight-specific prefix

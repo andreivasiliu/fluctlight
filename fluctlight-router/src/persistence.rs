@@ -5,7 +5,6 @@ use std::{
 };
 
 use file_lock::{FileLock, FileOptions};
-use flate2::{read::MultiGzDecoder, write::GzEncoder, Compression};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
@@ -33,7 +32,8 @@ pub(crate) struct RoomPersistence {
 // }
 
 pub(crate) struct PDUFile {
-    gz_file: Option<GzEncoder<File>>,
+    // gz_file: Option<GzEncoder<File>>,
+    file: File,
     file_path: PathBuf,
     file_lock: FileLock,
 }
@@ -41,41 +41,60 @@ pub(crate) struct PDUFile {
 impl PDUFile {
     fn new(file_path: PathBuf) -> Result<Self, std::io::Error> {
         let file_lock;
-        let gz_file;
+        // let gz_file;
 
         if !file_path.exists() {
             std::fs::write(&file_path, b"")?;
         }
         file_lock = lock_storage(&file_path)?;
-        gz_file = gzip_writer(&file_path)?;
+        // gz_file = gzip_writer(&file_path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(&file_path)?;
 
         Ok(PDUFile {
-            gz_file: Some(gz_file),
+            // gz_file: Some(gz_file),
+            file,
             file_path,
             file_lock,
         })
     }
 
-    pub(crate) fn read_contents(&mut self) -> Result<Vec<u8>, std::io::Error> {
-        let file_encoder = self
-            .gz_file
-            .take()
-            .expect("PDUFile should always have an opened gz_file");
-        let mut file = file_encoder.finish()?;
+    // pub(crate) fn read_contents(&mut self) -> Result<Vec<u8>, std::io::Error> {
+    //     let file_encoder = self
+    //         .gz_file
+    //         .take()
+    //         .expect("PDUFile should always have an opened gz_file");
+    //     let mut file = file_encoder.finish()?;
 
-        file.seek(SeekFrom::Start(0))?;
+    //     file.seek(SeekFrom::Start(0))?;
+
+    //     eprintln!("Loading {}", self.file_path.display());
+    //     let mut file_decoder = MultiGzDecoder::new(file);
+    //     let mut contents = Vec::new();
+    //     // FIXME: Figure out capacity (e.g. guesstimate based on compressed size)
+    //     file_decoder.read_to_end(&mut contents).unwrap();
+
+    //     let mut file = file_decoder.into_inner();
+    //     file.seek(SeekFrom::End(0))?;
+
+    //     let file_encoder = GzEncoder::new(file, Compression::default());
+    //     self.gz_file = Some(file_encoder);
+
+    //     Ok(contents)
+    // }
+
+    pub(crate) fn read_contents(&mut self) -> Result<Vec<u8>, std::io::Error> {
+        self.file.seek(SeekFrom::Start(0))?;
 
         eprintln!("Loading {}", self.file_path.display());
-        let mut file_decoder = MultiGzDecoder::new(file);
         let mut contents = Vec::new();
         // FIXME: Figure out capacity (e.g. guesstimate based on compressed size)
-        file_decoder.read_to_end(&mut contents).unwrap();
+        self.file.read_to_end(&mut contents).unwrap();
 
-        let mut file = file_decoder.into_inner();
-        file.seek(SeekFrom::End(0))?;
-
-        let file_encoder = GzEncoder::new(file, Compression::default());
-        self.gz_file = Some(file_encoder);
+        self.file.seek(SeekFrom::End(0))?;
 
         Ok(contents)
     }
@@ -102,16 +121,17 @@ impl PDUFile {
             pdu_blob,
         };
         // FIXME: error
-        let gz_file = self
-            .gz_file
-            .as_mut()
-            .expect("PDUFile should always have an opened gz_file");
-        serde_json::to_writer(&mut *gz_file, &pdu_blob)
+        // let gz_file = self
+        //     .gz_file
+        //     .as_mut()
+        //     .expect("PDUFile should always have an opened gz_file");
+        let file = &mut self.file;
+        serde_json::to_writer(&mut *file, &pdu_blob)
             .expect("Could not write to persistent room storage");
-        gz_file
+        file
             .write(b"\n")
             .expect("Could not write to persistent room storage");
-        gz_file
+        file
             .flush()
             .expect("Could not flush room persistence store");
     }
@@ -119,11 +139,12 @@ impl PDUFile {
 
 impl Drop for PDUFile {
     fn drop(&mut self) {
-        if let Some(mut gz_file) = self.gz_file.take() {
-            // Attempt to flush before unlocking
-            // FIXME: log issues
-            gz_file.flush().ok();
-        }
+        // if let Some(mut gz_file) = self.gz_file.take() {
+        //     // Attempt to flush before unlocking
+        //     // FIXME: log issues
+        //     gz_file.flush().ok();
+        // }
+        self.file.flush().ok();
         self.file_lock.unlock().ok();
     }
 }
@@ -153,8 +174,8 @@ impl RoomPersistence {
 
         // FIXME: Better error reporting.
         Ok(RoomPersistence {
-            state_pdu_file: PDUFile::new(storage_path.join("state_pdus.json.gz").to_owned())?,
-            other_pdu_file: PDUFile::new(storage_path.join("other_pdus.json.gz").to_owned())?,
+            state_pdu_file: PDUFile::new(storage_path.join("state_pdus.json").to_owned())?,
+            other_pdu_file: PDUFile::new(storage_path.join("other_pdus.json").to_owned())?,
         })
     }
 }
@@ -167,12 +188,12 @@ fn lock_storage(file_path: &Path) -> Result<FileLock, std::io::Error> {
     FileLock::lock(file_path, is_blocking, file_options)
 }
 
-fn gzip_writer(file_path: &Path) -> Result<GzEncoder<File>, std::io::Error> {
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .read(true)
-        .open(file_path)?;
+// fn gzip_writer(file_path: &Path) -> Result<GzEncoder<File>, std::io::Error> {
+//     let file = OpenOptions::new()
+//         .create(true)
+//         .append(true)
+//         .read(true)
+//         .open(file_path)?;
 
-    Ok(GzEncoder::new(file, Compression::default()))
-}
+//     Ok(GzEncoder::new(file, Compression::default()))
+// }
