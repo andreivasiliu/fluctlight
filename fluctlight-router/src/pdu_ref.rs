@@ -7,7 +7,7 @@ use vec_collections::VecMap1;
 
 use crate::{
     matrix_types::{Event, Id, Key, Room, ServerName, User},
-    server_keys::{EventHashable, Verifiable},
+    server_keys::{EventHashable, Verifiable, Hashable2, Signable2},
     state::TimeStamp,
 };
 
@@ -29,7 +29,7 @@ pub(crate) struct PDURef<'a, Content: PDUContentType<'a>> {
     #[serde(borrow)]
     pub sender: Cow<'a, Id<User>>,
     // Serialization is done for signing
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing_if="skip_serializing_signatures")]
     pub signatures: Option<SignaturesRef<'a>>,
     #[serde(skip_serializing_if = "Content::missing_state")]
     pub state_key: Content::StateKey,
@@ -38,11 +38,21 @@ pub(crate) struct PDURef<'a, Content: PDUContentType<'a>> {
     // TODO: missing 'membership'
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+fn skip_serializing_signatures(signatures: &Option<SignaturesRef>) -> bool {
+    if let Some(signatures) = signatures {
+        !signatures.serialize
+    } else {
+        true
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
 #[serde(transparent)]
 pub(crate) struct SignaturesRef<'a> {
     #[serde(borrow)]
     pub signatures: VecMap1<&'a Id<ServerName>, VecMap1<&'a Id<Key>, &'a str>>,
+    #[serde(skip)]
+    pub serialize: bool,
 }
 
 impl<'a> SignaturesRef<'a> {
@@ -113,6 +123,20 @@ where
 }
 
 impl<'a, C> EventHashable for PDURef<'a, C>
+where
+    C: PDUContentType<'a> + Serialize,
+    C::StateKey: Serialize,
+{
+}
+
+impl<'a, C> Hashable2 for PDURef<'a, C>
+where
+    C: PDUContentType<'a> + Serialize,
+    C::StateKey: Serialize,
+{
+}
+
+impl<'a, C> Signable2 for PDURef<'a, C>
 where
     C: PDUContentType<'a> + Serialize,
     C::StateKey: Serialize,
@@ -192,7 +216,7 @@ pub(crate) struct HistoryVisibilityContent<'a> {
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct EmptyContent {}
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(transparent)]
 pub(crate) struct UserStateKey<'a> {
     #[serde(borrow)]

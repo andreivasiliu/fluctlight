@@ -163,3 +163,15 @@ impl Id<User> {
             .expect("The server part should already be validated")
     }
 }
+
+impl Id<Room> {
+    pub fn server_name(&self) -> &Id<ServerName> {
+        let parts = self
+            .as_str()
+            .split_once(':')
+            .expect("The name should already be validated");
+
+        Id::<ServerName>::try_from_str(parts.1)
+            .expect("The server part should already be validated")
+    }
+}

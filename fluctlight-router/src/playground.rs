@@ -6,17 +6,17 @@ use std::{
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use serde::Deserialize;
 use serde_json::{value::RawValue, Value};
+use vec_collections::VecMap1;
 
 use crate::{
     canonical_hash::verify_content_hash,
     edu_ref::parse_edu_ref,
     interner::{ArcStr, Interner},
-    matrix_types::{Event, Id, Room, ServerName},
+    matrix_types::{Event, Id, Key, Room, ServerName, User},
     pdu_arc::{AnyContent, PDUArc},
-    pdu_owned::{MakeJoinResponse, SendJoinResponse},
-    pdu_ref::{parse_pdu_ref, AnyContentRef, PDURef, PDUContentType},
+    pdu_ref::{parse_pdu_ref, AnyContentRef, MemberContent, PDUContentType, PDURef, SignaturesRef},
     persistence::{PDUBlob, RoomPersistence},
-    server_keys::{EventHashable, Hashable, Signable, Verifiable},
+    server_keys::{EventHashable, Hashable2, Signable2, Verifiable},
     signed_request::SignedRequestBuilder,
     state::{State, TimeStamp},
 };
@@ -112,51 +112,101 @@ pub(crate) fn send_backfill_request(state: &State) -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
+#[derive(Deserialize)]
+struct MakeJoinResponse<'a> {
+    #[serde(borrow)]
+    event: PDURef<'a, MemberContent<'a>>,
+    room_version: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct SendJoinResponse<'a> {
+    #[serde(borrow)]
+    auth_chain: Vec<&'a RawValue>,
+    event: &'a RawValue,
+    state: Vec<&'a RawValue>,
+}
+
 pub(crate) fn send_join_request(state: &State) -> Result<(), Box<dyn Error>> {
-    // let uri = format!(
-    //     "/_matrix/federation/v1/state/{}?eventId={}",
-    //     "!jhTIqlwlxKKoPPHIgH:synapse-dev.demi.ro",
-    //     "$keEA7MhamQCs-qEiXbtfYJtyWFZysXXoZqRMLKrp3ps",
-    // );
-    let uri = format!(
-        "/_matrix/federation/v1/make_join/{}/{}?ver=6",
-        "!jhTIqlwlxKKoPPHIgH:synapse-dev.demi.ro", "@whyte:fluctlight-dev.demi.ro",
+    let room_id = Id::<Room>::try_from_str("!jhTIqlwlxKKoPPHIgH:synapse-dev.demi.ro").unwrap();
+    let foreign_server_name = room_id.server_name();
+    let user_id = Id::<User>::try_from_str("@whyte:fluctlight-dev.demi.ro").unwrap();
+    let room_version = 6;
+
+    assert_eq!(user_id.server_name(), state.server_name.as_id());
+
+    let make_join_uri = format!(
+        "/_matrix/federation/v1/make_join/{}/{}?ver={}",
+        room_id, user_id, room_version,
     );
 
-    let response_bytes = SignedRequestBuilder::get(state, &uri)
-        .destination("fluctlight-dev.demi.ro")
+    let response_bytes = SignedRequestBuilder::get(state, &make_join_uri)
+        .destination(foreign_server_name.as_str())
         .send()?;
+
+    // Pulling these up before MakeJoinResponse to unconfuse drop-related lifetimes.
+    let owned_sha256_hash;
+    let owned_server_signatures;
+
     let response: MakeJoinResponse = serde_json::from_slice(&response_bytes)?;
 
-    // let make_join_response_bytes = send_signed_request(uri, None, state)?;
-
-    // let make_join_response: MakeJoinResponse = serde_json::from_slice(&*make_join_response_bytes)?;
+    if response.room_version != room_version.to_string() {
+        eprintln!(
+            "Mismatching room version on response: {} vs {}",
+            response.room_version,
+            room_version.to_string(),
+        );
+        // FIXME
+    }
 
     let mut join_template = response.event;
 
-    eprintln!("PDU: {:?}", join_template);
+    eprintln!("Join PDU: {:?}", join_template);
 
-    join_template.origin = Some(state.server_name.clone());
+    join_template.origin = Some(state.server_name.as_id());
     join_template.origin_server_ts = TimeStamp::now();
+    owned_sha256_hash = join_template.generate_minimal_content_hash();
 
-    join_template.hash();
-    join_template.sign(state);
+    let hashes: VecMap1<&str, &str> = [("sha256", owned_sha256_hash.as_str())]
+        .into_iter()
+        .collect();
+
+    join_template.hashes = Some(hashes);
     let event_id = join_template.generate_event_id();
 
-    // FIXME
-    // join_template.verify(state, &state.server_name, signatures).unwrap();
+    owned_server_signatures = join_template.sign(state);
+    let server_signatures: VecMap1<&Id<Key>, &str> = owned_server_signatures
+        .iter()
+        .map(|(key_name, key_signature)| (key_name.as_id(), key_signature.as_str()))
+        .collect();
 
-    // The spec requires this to be missing when transferred over federation
-    // let event_id = join_template.event_id.take().unwrap();
+    if join_template.signatures.is_some() {
+        eprintln!("Join template's signatures should be empty but aren't");
+        // FIXME
+    }
 
-    let uri = format!(
-        "/_matrix/federation/v2/send_join/{}/{}",
-        "!jhTIqlwlxKKoPPHIgH:synapse-dev.demi.ro", event_id,
-    );
+    let signatures = [(state.server_name.as_id(), server_signatures)]
+        .into_iter()
+        .collect();
 
+    let signatures_ref = SignaturesRef {
+        signatures,
+        serialize: true,
+    };
+
+    join_template
+        .verify(state, &state.server_name, &signatures_ref)
+        .unwrap();
+
+    join_template.signatures = Some(signatures_ref);
+
+    let body_content = serde_json::value::to_raw_value(&join_template)
+        .expect("Serialization should always succeed");
+
+    let uri = format!("/_matrix/federation/v2/send_join/{}/{}", room_id, event_id);
     let send_join_response_bytes = SignedRequestBuilder::put(state, &uri)
-        .destination("synapse-dev.demi.ro")
-        .send_body(&join_template)?;
+        .destination(foreign_server_name.as_str())
+        .send_body(body_content)?;
 
     eprintln!(
         "Join response: {}",
@@ -168,16 +218,12 @@ pub(crate) fn send_join_request(state: &State) -> Result<(), Box<dyn Error>> {
     eprintln!("Auth events: {:?}", send_join_response.auth_chain.len());
     eprintln!("State events: {:?}", send_join_response.state.len());
 
-    state.with_persistent_mut(move |persistent| {
-        let send_join_response = send_join_response;
-        let room = persistent
-            .rooms
-            .entry(send_join_response.event.room_id)
-            .or_default();
-        for event in send_join_response.state.iter().rev() {
-            room.pdu_blobs.push(event.to_string());
-        }
-    });
+    eprintln!("Ingesting auth events...");
+    ingest_transaction(state, None, &send_join_response.auth_chain, &[]);
+    eprintln!("Ingesting state events...");
+    ingest_transaction(state, None, &send_join_response.state, &[]);
+    eprintln!("Ingesting join event...");
+    ingest_transaction(state, None, &[send_join_response.event], &[]);
 
     Ok(())
 }
@@ -243,12 +289,12 @@ pub(crate) fn load_join_event() -> Result<(), Box<dyn Error>> {
     for parsed_pdu in &pdus {
         // TODO: Is this correct handling of missing origins?
         // Or perhaps should assert instead?
-        let real_origin = parsed_pdu.real_origin
-            .as_ref()
-            .map(|origin| origin.as_id());
-        room_persistence
-            .state_pdu_file
-            .write_pdu(&parsed_pdu.event_id, real_origin, &parsed_pdu.blob);
+        let real_origin = parsed_pdu.real_origin.as_ref().map(|origin| origin.as_id());
+        room_persistence.state_pdu_file.write_pdu(
+            &parsed_pdu.event_id,
+            real_origin,
+            &parsed_pdu.blob,
+        );
     }
     drop(room_persistence);
     timer.stop("persist events");
@@ -344,7 +390,7 @@ pub(crate) fn load_room(state: &State) -> Result<(), Box<dyn Error>> {
         pdus.push(ParsedPDU {
             event_id: partial_pdu.event_id,
             arc_event_id: None,
-            real_origin: None,  // FIXME
+            real_origin: None, // FIXME
             pdu: pdu_arc,
             blob: partial_pdu.pdu_blob,
             signature_check: Some(partial_pdu.signature_check),
@@ -526,7 +572,7 @@ pub(crate) fn load_persistent_room(state: &crate::state::State, room_id: &Id<Roo
             let parsed_pdu = ParsedPDU {
                 event_id,
                 arc_event_id: Some(arc_event_id.clone()),
-                real_origin: None,  // FIXME
+                real_origin: None, // FIXME
                 pdu: pdu_arc,
                 blob: pdu_blob,
                 signature_check: Some(signature_check),
@@ -540,21 +586,29 @@ pub(crate) fn load_persistent_room(state: &crate::state::State, room_id: &Id<Roo
     });
 }
 
+pub(crate) struct Transaction<'a> {
+    pub transaction_id: &'a str,
+    pub origin: &'a str,
+    pub origin_server_ts: TimeStamp,
+}
+
 pub(crate) fn ingest_transaction(
     state: &crate::state::State,
-    transaction_id: &str,
-    origin: &str,
-    origin_server_ts: TimeStamp,
-    pdus: Vec<&RawValue>,
-    edus: Vec<&RawValue>,
+    transaction: Option<Transaction<'_>>,
+    pdus: &[&RawValue],
+    edus: &[&RawValue],
 ) -> BTreeMap<Box<Id<Event>>, Result<(), String>> {
     let mut parsed_pdus = Vec::new();
 
-    let origin = Id::try_from_str(origin).unwrap();
-
-    let time = origin_server_ts.as_millis();
-
-    eprintln!("Transaction {transaction_id} from {origin} at {time}:");
+    let origin = if let Some(transaction) = transaction {
+        let origin = Id::try_from_str(transaction.origin).unwrap();
+        let time = transaction.origin_server_ts.as_millis();
+        let id = transaction.transaction_id;
+        eprintln!("Transaction {id} from {origin} at {time}:");
+        Some(origin)
+    } else {
+        None
+    };
 
     for edu in edus {
         match parse_edu_ref(edu) {
@@ -568,15 +622,21 @@ pub(crate) fn ingest_transaction(
         }
     }
 
-    for pdu in pdus {
+    for &pdu in pdus {
         eprintln!("* Got PDU: {}", pdu);
 
         match parse_pdu_ref(&pdu) {
             Ok(mut pdu_ref) => {
-                if pdu_ref.origin.is_some() && pdu_ref.origin != Some(origin) {
-                    eprintln!("* Warning: Incorrect origin sent over federation: {:?} (real: {})", pdu_ref.origin, origin);
+                if origin.is_some() {
+                    if pdu_ref.origin.is_some() && pdu_ref.origin != origin {
+                        eprintln!(
+                            "* Warning: Incorrect origin sent over federation: {:?} (real: {})",
+                            pdu_ref.origin, origin.expect("Checked above")
+                        );
+                    }
+
+                    pdu_ref.origin = origin;
                 }
-                pdu_ref.origin = Some(origin);
                 parsed_pdus.push((pdu_ref, pdu));
             }
             Err(err) => {
@@ -590,8 +650,7 @@ pub(crate) fn ingest_transaction(
     state.with_persistent_mut(|persistent_state| {
         for (pdu_ref, pdu_blob) in &parsed_pdus {
             let event_id = pdu_ref.generate_event_id();
-            if let Some(room) = persistent_state.rooms.get_mut(pdu_ref.room_id.as_id())
-            {
+            if let Some(room) = persistent_state.rooms.get_mut(pdu_ref.room_id.as_id()) {
                 if room.room_db.is_none() {
                     // Warning: this loses the real origin
                     eprintln!("* Got json-persistent room PDU: {event_id}");
@@ -620,10 +679,18 @@ pub(crate) fn ingest_transaction(
                 if let Some(room_persistence) = &mut room.room_persistence {
                     if AnyContentRef::has_state(&pdu_ref.state_key) {
                         eprintln!("* Got persisted state PDU: {event_id}");
-                        room_persistence.state_pdu_file.write_pdu(&event_id, Some(origin), pdu_blob);
+                        room_persistence.state_pdu_file.write_pdu(
+                            &event_id,
+                            origin,
+                            pdu_blob,
+                        );
                     } else {
                         eprintln!("* Got persisted non-state PDU: {event_id}");
-                        room_persistence.other_pdu_file.write_pdu(&event_id, Some(origin), pdu_blob);
+                        room_persistence.other_pdu_file.write_pdu(
+                            &event_id,
+                            origin,
+                            pdu_blob,
+                        );
                     }
                 } else {
                     eprintln!("* Got ephemeral PDU: {event_id}");
@@ -642,10 +709,12 @@ pub(crate) fn ingest_transaction(
                     eprintln!("* Warning: Hash check failed: {event_id}");
                 }
 
+                let real_origin = origin.map(|origin| interner.get_or_insert(origin));
+
                 let parsed_pdu = ParsedPDU {
                     event_id: event_id.clone(),
                     arc_event_id: Some(arc_event_id.clone()),
-                    real_origin: Some(interner.get_or_insert(origin)),
+                    real_origin,
                     pdu: pdu_arc,
                     blob: pdu_blob.to_owned(),
                     signature_check: Some(signature_check),
@@ -657,10 +726,7 @@ pub(crate) fn ingest_transaction(
                 room.pdus.insert(arc_event_id, parsed_pdu);
                 pdu_results.insert(event_id, Ok(()));
             } else {
-                eprintln!(
-                    "* Alien PDU dropped: {event_id} (room {})",
-                    pdu_ref.room_id
-                );
+                eprintln!("* Alien PDU dropped: {event_id} (room {})", pdu_ref.room_id);
             }
         }
     });

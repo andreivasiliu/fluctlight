@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use serde::Serialize;
-use serde_json::value::{to_raw_value, RawValue};
+use serde_json::value::RawValue;
 
 use crate::state::State;
 
@@ -69,7 +69,7 @@ impl<'a> SignedRequestBuilder<'a> {
             uri: self.uri,
         };
 
-        let url = format!("http://{}:8008{}", signed_json.destination, self.uri,);
+        let url = format!("http://{}:8008{}", signed_json.destination, self.uri);
 
         let mut req = match self.method {
             "GET" => ureq::get(&url),
@@ -86,21 +86,22 @@ impl<'a> SignedRequestBuilder<'a> {
         Ok(bytes)
     }
 
-    pub(crate) fn send_body<T: Serialize>(self, body: &T) -> Result<Vec<u8>, Box<dyn Error>> {
-        let mut req = match self.method {
-            "GET" => ureq::get(self.uri),
-            "POST" => ureq::post(self.uri),
-            method => panic!("Unknown method {}", method),
-        };
-
-        let content = to_raw_value(body)?;
-
+    pub(crate) fn send_body(self, content: Box<RawValue>) -> Result<Vec<u8>, Box<dyn Error>> {
         let signed_json = SignedJson {
             content: Some(&content),
             destination: self.destination.expect("Destination must be set"),
             method: self.method,
             origin: self.origin,
             uri: self.uri,
+        };
+
+        let url = format!("http://{}:8008{}", signed_json.destination, self.uri);
+
+        let mut req = match self.method {
+            "GET" => ureq::get(&url),
+            "POST" => ureq::post(&url),
+            "PUT" => ureq::put(&url),
+            method => panic!("Unknown method {}", method),
         };
 
         req = sign(req, self.state, &signed_json);

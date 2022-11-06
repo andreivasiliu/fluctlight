@@ -101,6 +101,24 @@ pub(crate) trait Signable: Serialize {
     }
 }
 
+pub(crate) trait Signable2: Serialize {
+    fn sign(&mut self, state: &State) -> BTreeMap<Box<Id<Key>>, String> {
+        let mut server_signatures = BTreeMap::new();
+
+        let bytes = serde_json::to_vec(&self).expect("Serialization should always succeed");
+
+        for (key_name, server_key) in &state.server_key_pairs {
+            let noise = None;
+            let signature = server_key.key_pair.sk.sign(&bytes, noise);
+            let sig_b64 = base64::encode_config(&*signature, base64::STANDARD_NO_PAD);
+
+            server_signatures.insert(key_name.clone(), sig_b64);
+        }
+
+        server_signatures
+    }
+}
+
 pub(crate) trait Verifiable: Serialize {
     fn verify<'a, 'b>(
         &self,
@@ -184,30 +202,29 @@ pub(crate) trait Hashable: Serialize {
         }
 
         *self.hashes_mut() = Some(hashes);
+    }
+}
 
-        /* No longer generating here, see method below
+pub(crate) trait Hashable2: Serialize {
+    // This generates a hash only for the fields known by the PDURef structure,
+    // and is thus only useful for hashing this server's own PDUs.
+    fn generate_minimal_content_hash(&mut self) -> String {
+        let mut scratch_buffer = SmallVec::<[u8; 64]>::new();
+        scratch_buffer.resize(64, 0);
+
         let mut hasher = sha2::Sha256::new();
         serde_json::to_writer(&mut hasher, &self).expect("Serialization should always succeed");
         let sha256_hash = hasher.finalize();
 
-        // eprintln!(
-        //     "Hashing hashable: \n---\n{}\n---\n",
-        //     String::from_utf8_lossy(&bytes)
-        // );
-
-        scratch_buffer[0] = b'$';
         let hash_size = base64::encode_config_slice(
             sha256_hash.as_slice(),
-            base64::URL_SAFE_NO_PAD,
-            &mut scratch_buffer[1..64],
+            base64::STANDARD_NO_PAD,
+            &mut scratch_buffer[..],
         );
-        let b64_sha256_hash: &str = std::str::from_utf8(&scratch_buffer[..hash_size + 1])
-            .expect("Base64 is always a string");
+        let b64_sha256_hash: &str =
+            std::str::from_utf8(&scratch_buffer[..hash_size]).expect("Base64 is always a string");
 
-        let event_id = Id::<Event>::try_boxed_from_str(b64_sha256_hash).expect("Valid event ID");
-        */
-
-        // *self.event_id_mut() = Some(event_id);
+        b64_sha256_hash.to_string()
     }
 }
 

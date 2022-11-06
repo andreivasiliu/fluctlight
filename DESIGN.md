@@ -211,13 +211,10 @@ Road to a public federation listener:
   * May implement runtime check when redacting
 * Should figure out PDU storage
   * May index and skip loading non-state PDUs
-* Must track PDU origin
 * Must perform new join experiment
+  * Should set display name on the join event
 * Must figure out packaging and deployment
-* Should fix event ID calculation
 * May implement redaction (this could allow public read-only access)
 * May implement profile and device list query APIs
-* Should set display name on the join event
-* Should display memory usage
 * Should be able to drop non-state PDUs from memory
 * Must rename key to have Fluctlight-specific prefix

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
 use crate::{
-    playground::ingest_transaction,
+    playground::{ingest_transaction, Transaction},
     request::{EmptyQS, GenericRequest, MatrixRequest, RequestData},
     state::TimeStamp,
 };
@@ -53,11 +53,13 @@ pub(super) fn put_federation_v1_send<'r>(
 ) -> Response<'r> {
     let pdus = ingest_transaction(
         request_data.state,
-        request.path.transaction_id,
-        request.body.origin,
-        request.body.origin_server_ts,
-        request.body.pdus,
-        request.body.edus.unwrap_or(vec![]),
+        Some(Transaction {
+            transaction_id: request.path.transaction_id,
+            origin: request.body.origin,
+            origin_server_ts: request.body.origin_server_ts,
+        }),
+        &request.body.pdus,
+        &request.body.edus.unwrap_or(vec![]),
     );
 
     let pdus: BTreeMap<_, _> = pdus
